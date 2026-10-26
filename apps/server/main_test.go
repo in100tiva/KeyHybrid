@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -141,5 +142,36 @@ func TestDataDirFicaNoHome(t *testing.T) {
 	}
 	if fi, err := os.Stat(want); err != nil || !fi.IsDir() {
 		t.Fatalf("dataDir() não criou %q: %v", want, err)
+	}
+}
+
+func TestMasterKeyNaoSobrescreve(t *testing.T) {
+	p := filepath.Join(t.TempDir(), ".master.key")
+	k1 := loadOrCreateMasterKey(p)
+	if len(k1) != 32 {
+		t.Fatalf("chave nova com %d bytes", len(k1))
+	}
+	if k2 := loadOrCreateMasterKey(p); !bytes.Equal(k1, k2) {
+		t.Fatal("segunda leitura gerou outra chave")
+	}
+	if fi, _ := os.Stat(p); fi.Mode().Perm() != 0600 {
+		t.Fatalf("permissão %v, want 0600", fi.Mode().Perm())
+	}
+}
+
+func TestAnthropicNaoVaiParaTerceiro(t *testing.T) {
+	if u := resolveProviderURL("anthropic", ""); !strings.HasPrefix(u, "https://api.anthropic.com/") {
+		t.Fatalf("anthropic -> %s", u)
+	}
+	cases := map[any]string{
+		"anthropic/claude-sonnet-5-5": "claude-sonnet-5-5",
+		"claude-opus-5-5":             "claude-opus-5-5",
+		"openrouter/auto":             "claude-haiku-5-5",
+		nil:                           "claude-haiku-5-5",
+	}
+	for in, want := range cases {
+		if got := anthropicModel(in); got != want {
+			t.Errorf("anthropicModel(%v) = %q, want %q", in, got, want)
+		}
 	}
 }

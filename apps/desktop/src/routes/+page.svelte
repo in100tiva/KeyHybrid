@@ -240,39 +240,16 @@
 
     isSaving = true;
     try {
-      // 1. Salvar direto no Gateway Go local (garante atualização instantânea)
-      const resp = await fetch(`${gatewayUrl}/api/keyhybrid/keys`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          alias,
-          provider: newProvider,
-          secret_key: rawSecret,
-          default_model: newModel,
-          kind,
-          base_url: isServiceProvider ? baseUrl : undefined,
-        }),
+      // Salva pelo Rust (DPAPI + Gateway com token local); erro cai no catch abaixo
+      await invoke("save_vault_key", {
+        gatewayUrl,
+        alias,
+        provider: newProvider,
+        secretKey: rawSecret,
+        defaultModel: newModel,
+        kind,
+        baseUrl: isServiceProvider ? baseUrl : null,
       });
-
-      if (!resp.ok) {
-        const errData = await resp.text();
-        throw new Error(errData || `HTTP ${resp.status}`);
-      }
-
-      // 2. Também espelhar no Cofre Nativo do Windows (DPAPI) via Rust
-      try {
-        await invoke("save_vault_key", {
-          gatewayUrl,
-          alias,
-          provider: newProvider,
-          secretKey: rawSecret,
-          defaultModel: newModel,
-          kind,
-          baseUrl: isServiceProvider ? baseUrl : null,
-        });
-      } catch {
-        // Ignora caso o binário Rust ainda não tenha sido reiniciado
-      }
 
       newAlias = "";
       newSecret = "";
@@ -293,9 +270,7 @@
   async function handleActivateKey(k: KeySafeView) {
     if (k.active || k.kind === "service") return;
     try {
-      await fetch(`${gatewayUrl}/api/keyhybrid/keys/${k.id}/activate`, {
-        method: "POST",
-      });
+      await invoke("activate_vault_key", { gatewayUrl, id: k.id });
       await syncVault();
       showNotice(`'${k.alias}' definida como chave ativa.`);
     } catch (err: any) {
@@ -306,18 +281,11 @@
   // Remover chave ativa ou específica
   async function handleDeleteKey(k: KeySafeView) {
     try {
-      await fetch(`${gatewayUrl}/api/keyhybrid/keys/${k.id}`, {
-        method: "DELETE",
+      await invoke("delete_vault_key", {
+        gatewayUrl,
+        id: k.id,
+        alias: k.alias,
       });
-      try {
-        await invoke("delete_vault_key", {
-          gatewayUrl,
-          id: k.id,
-          alias: k.alias,
-        });
-      } catch {
-        // Ignora se DPAPI já estiver limpo
-      }
       await syncVault();
       showNotice(`Chave '${k.alias}' removida do cofre.`);
     } catch (err: any) {
