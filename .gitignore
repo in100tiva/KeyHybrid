@@ -1,0 +1,39 @@
+# Databases & Local Secrets (NEVER COMMIT)
+pb_data/
+**/pb_data/
+*.db
+*.db-shm
+*.db-wal
+.xiaomi_token
+**/.xiaomi_token
+.master.key
+.pin.vault
+.env
+.env.*
+
+# Build Artifacts & Binaries
+*.exe
+*.exe~
+*~
+apps/server/keyhybrid-server
+apps/server/keyhybrid-server.exe
+target/
+**/target/
+node_modules/
+**/node_modules/
+.svelte-kit/
+**/.svelte-kit/
+build/
+**/build/
+dist/
+
+# Generated Media Samples
+*.mp4
+*.mp3
+*.wav
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
