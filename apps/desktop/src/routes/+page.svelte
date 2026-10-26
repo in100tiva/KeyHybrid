@@ -37,11 +37,40 @@
     outro: { baseUrl: "" },
   };
 
+  // Grupos do seletor de provedor (popover próprio; o select nativo sai branco no WebKitGTK)
+  const PROVIDER_GROUPS = [
+    { label: "IA", items: ["openrouter", "gemini", "anthropic"] },
+    { label: "Serviços", items: ["vercel", "supabase", "github", "outro"] },
+  ];
+
+  // shortcut: só prefixos conhecidos; Vercel não tem prefixo fixo, fica manual
+  const PROVIDER_PREFIXES: [string, string][] = [
+    ["sk-or-", "openrouter"],
+    ["sk-ant-", "anthropic"],
+    ["AIza", "gemini"],
+    ["sbp_", "supabase"],
+    ["ghp_", "github"],
+    ["github_pat_", "github"],
+    ["gho_", "github"],
+    ["ghu_", "github"],
+    ["ghs_", "github"],
+    ["ghr_", "github"],
+  ];
+
+  function detectProvider(secret: string): string | null {
+    const s = secret.trim();
+    return PROVIDER_PREFIXES.find(([prefix]) => s.startsWith(prefix))?.[1] ?? null;
+  }
+
   // Inputs para adicionar nova chave na barra inferior (/Key | nome | sk-...)
   let newAlias = $state("");
   let newSecret = $state("");
   let newProvider = $state("openrouter");
   let newBaseUrl = $state("");
+  let providerMenuOpen = $state(false);
+  let providerPickerEl: HTMLDivElement | undefined = $state();
+  let providerMenuEl: HTMLDivElement | undefined = $state();
+  let providerTriggerEl: HTMLButtonElement | undefined = $state();
   let isServiceProvider = $derived(newProvider in SERVICES);
   let newModel = $state("openrouter/auto");
   let isSaving = $state(false);
@@ -300,6 +329,56 @@
   function selectProvider(p: string) {
     newProvider = p;
     newBaseUrl = SERVICES[p]?.baseUrl ?? "";
+  }
+
+  function closeProviderMenu(returnFocus = false) {
+    providerMenuOpen = false;
+    if (returnFocus) providerTriggerEl?.focus();
+  }
+
+  function openProviderMenu() {
+    providerMenuOpen = true;
+    setTimeout(() => providerMenuEl?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus(), 0);
+  }
+
+  function toggleProviderMenu() {
+    if (providerMenuOpen) closeProviderMenu();
+    else openProviderMenu();
+  }
+
+  function pickProvider(p: string) {
+    selectProvider(p);
+    closeProviderMenu(true);
+  }
+
+  // Setas: abrem ou movem o foco entre as opções; Esc fecha e devolve o foco ao pill
+  function onProviderKey(e: KeyboardEvent) {
+    if (e.key === "Escape" && providerMenuOpen) {
+      e.preventDefault();
+      closeProviderMenu(true);
+    } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!providerMenuOpen) return openProviderMenu();
+      const opts = Array.from(providerMenuEl?.querySelectorAll<HTMLElement>('[role="option"]') ?? []);
+      const i = opts.indexOf(document.activeElement as HTMLElement);
+      const delta = e.key === "ArrowDown" ? 1 : -1;
+      const next = i < 0 ? (delta > 0 ? 0 : opts.length - 1) : (i + delta + opts.length) % opts.length;
+      opts[next]?.focus();
+    }
+  }
+
+  function onWindowPointerDown(e: PointerEvent) {
+    if (providerMenuOpen && providerPickerEl && !providerPickerEl.contains(e.target as Node)) {
+      closeProviderMenu();
+    }
+  }
+
+  // Detecta o provedor só no paste (trocar à mão depois vale); sem match não muda nada
+  function onSecretPaste(e: ClipboardEvent) {
+    const detected = detectProvider(e.clipboardData?.getData("text") ?? "");
+    if (!detected || detected === newProvider) return;
+    selectProvider(detected);
+    showNotice(`Detectado: ${detected}`);
   }
 
   // Serviço: a lista só seleciona (não ativa) para mostrar os comandos no passo 2
@@ -692,6 +771,8 @@
   });
 </script>
 
+<svelte:window onpointerdown={onWindowPointerDown} />
+
 <!-- FILTRO SVG DE DISTORÇÃO LÍQUIDA ESTILO MACOS GENIE -->
 <svg class="genie-svg-defs" width="0" height="0" aria-hidden="true">
   <defs>
@@ -1071,32 +1152,55 @@
 
       <!-- FAIXA DE 3 PILLS ABAIXO DO QUADRO (EXATAMENTE COMO NO PLAN WISE) -->
       <div class="Quick-pills-row">
-        <label class="config-pill" title="Provedor da nova chave">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="3" y="4" width="18" height="16" rx="3" />
-            <path d="M3 10h18" />
-          </svg>
-          <span>Provedor</span>
-          <select
-            class="provider-select"
-            aria-label="Provedor da nova chave"
-            value={newProvider}
-            onchange={(e) => selectProvider(e.currentTarget.value)}
+        <div class="provider-picker" bind:this={providerPickerEl}>
+          <button
+            type="button"
+            class="config-pill provider-trigger"
+            bind:this={providerTriggerEl}
+            aria-haspopup="listbox"
+            aria-expanded={providerMenuOpen}
+            title="Provedor da nova chave"
+            onclick={toggleProviderMenu}
+            onkeydown={onProviderKey}
           >
-            <optgroup label="IA">
-              <option value="openrouter">openrouter</option>
-              <option value="gemini">gemini</option>
-              <option value="anthropic">anthropic</option>
-            </optgroup>
-            <optgroup label="Serviços">
-              <option value="vercel">vercel</option>
-              <option value="supabase">supabase</option>
-              <option value="github">github</option>
-              <option value="outro">outro</option>
-            </optgroup>
-          </select>
-          <span class="pill-arrow">⌄</span>
-        </label>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="4" width="18" height="16" rx="3" />
+              <path d="M3 10h18" />
+            </svg>
+            <span>Provedor</span>
+            <small>{newProvider}</small>
+            <span class="pill-arrow">⌄</span>
+          </button>
+
+          {#if providerMenuOpen}
+            <div
+              class="provider-menu"
+              role="listbox"
+              tabindex="-1"
+              aria-label="Provedor da nova chave"
+              bind:this={providerMenuEl}
+              onkeydown={onProviderKey}
+            >
+              {#each PROVIDER_GROUPS as group (group.label)}
+                <div class="provider-group" role="group" aria-label={group.label}>
+                  <div class="provider-group-title" aria-hidden="true">{group.label}</div>
+                  {#each group.items as p (p)}
+                    <button
+                      type="button"
+                      role="option"
+                      class="provider-option"
+                      aria-selected={newProvider === p}
+                      onclick={() => pickProvider(p)}
+                    >
+                      <span>{p}</span>
+                      {#if newProvider === p}<span class="provider-check">✓</span>{/if}
+                    </button>
+                  {/each}
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
 
         <button
           class="config-pill {fridayEnabled ? 'friday-pill-active' : ''} {!hasOpenRouterKey ? 'friday-pill-locked' : ''}"
@@ -1229,20 +1333,12 @@
               }}
             />
 
-            {#if isServiceProvider}
-              <input
-                type="text"
-                class="input-secret input-url"
-                placeholder="URL base (https://…)"
-                bind:value={newBaseUrl}
-              />
-            {/if}
-
             <input
               type="password"
               class="input-secret"
               placeholder={isServiceProvider ? "cole o token" : "cole a chave sk-or-v1-..."}
               bind:value={newSecret}
+              onpaste={onSecretPaste}
               onkeydown={(e) => {
                 if (e.key === "Enter") handleSaveKey();
               }}
@@ -1260,6 +1356,21 @@
               </svg>
             </button>
           </div>
+
+          {#if isServiceProvider}
+            <div class="dock-url-row">
+              <span class="dock-url-label">URL base</span>
+              <input
+                type="text"
+                class="input-secret"
+                placeholder="https://api.exemplo.com"
+                bind:value={newBaseUrl}
+                onkeydown={(e) => {
+                  if (e.key === "Enter") handleSaveKey();
+                }}
+              />
+            </div>
+          {/if}
         {/if}
       </div>
     </section>
@@ -2178,20 +2289,75 @@
     text-overflow: ellipsis;
   }
 
-  .provider-select {
-    background: transparent;
-    border: none;
-    outline: none;
-    color: #71717a;
-    font-size: 10.5px;
-    cursor: pointer;
+  .provider-picker {
+    position: relative;
     min-width: 0;
   }
 
-  .provider-select option,
-  .provider-select optgroup {
-    background: #18181b;
+  .provider-trigger {
+    width: 100%;
+  }
+
+  .provider-menu {
+    position: absolute;
+    left: 0;
+    bottom: calc(100% + 6px);
+    z-index: 20;
+    min-width: 170px;
+    padding: 6px;
+    background: #202024;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+  }
+
+  .provider-group + .provider-group {
+    margin-top: 4px;
+    padding-top: 4px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+  }
+
+  .provider-group-title {
+    padding: 4px 8px 2px;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #52525b;
+  }
+
+  .provider-option {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 8px;
+    background: none;
+    border: none;
+    border-radius: 6px;
+    color: #a1a1aa;
+    font-size: 11.5px;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+  }
+
+  .provider-option:hover,
+  .provider-option:focus-visible {
+    background: #27272a;
     color: #f4f4f5;
+    outline: none;
+  }
+
+  .provider-option[aria-selected="true"] {
+    color: #f4f4f5;
+  }
+
+  .provider-check {
+    color: #84cc16;
+    font-size: 11px;
+    font-weight: 700;
   }
 
   .pill-arrow {
@@ -2294,6 +2460,7 @@
 
   .input-secret {
     flex: 1;
+    min-width: 0;
     background: transparent;
     border: none;
     border-left: 1px solid #27272a;
@@ -2303,8 +2470,19 @@
     outline: none;
   }
 
-  .input-url {
-    flex: 0 0 190px;
+  .dock-url-row {
+    padding: 8px 14px 10px 44px;
+    background: #121214;
+    border-top: 1px solid rgba(255, 255, 255, 0.04);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .dock-url-label {
+    flex: 0 0 auto;
+    font-size: 11px;
+    color: #52525b;
   }
 
   .input-alias::placeholder,
