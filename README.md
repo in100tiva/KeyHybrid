@@ -282,6 +282,34 @@ curl http://127.0.0.1:8090/v1/videos \
 
 ---
 
+## 🔐 Chaves de serviço (Vercel, Supabase, GitHub…)
+
+Para qualquer API que não seja de IA, escolha no seletor **Provedor** um item do grupo **Serviços** (vercel, supabase, github ou outro; na API, `kind: "service"`), informando o alias e a URL base (`https://`). O segredo não sai do KeyHybrid.
+
+**Proxy:** chame a API pelo gateway com o token local. A chave entra no cabeçalho só dentro do gateway:
+
+```bash
+curl -H "X-KeyHybrid-Token: $(cat ~/.keyhybrid/.cli.token)" \
+  http://127.0.0.1:8090/proxy/<alias>/v9/projects
+```
+
+**`kh run`:** para CLIs que não aceitam trocar a URL da API. Injeta a variável só no processo filho:
+
+```bash
+kh run --env VERCEL_TOKEN=<alias> -- vercel deploy
+```
+
+Fora de terminal (agente, pipe, log) o segredo sai mascarado como `****`. Em terminal interativo a saída passa direto.
+
+**Limites:**
+- Um processo malicioso rodando como o seu usuário continua podendo ler a chave.
+- Não há PIN para liberar chave de produção.
+- APIs que exigem dois cabeçalhos com a chave (ex.: PostgREST do Supabase, `apikey` + `Authorization`) não funcionam. A Management API do Supabase funciona.
+- A interface ainda usa só `Authorization: Bearer`; cabeçalho customizado só pela API.
+- No Windows, `kh run` funciona pelo binário (`keyhybrid-server.exe run …`); o atalho `kh` é só Linux.
+
+---
+
 ## 🎙️ Ativando o Ouvido Local da Assistente Sexta-Feira (Opcional)
 
 Se quiser usar o reconhecimento de voz contínuo pelo microfone físico (Windows ou Linux):

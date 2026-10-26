@@ -31,6 +31,9 @@ type KeyCreateRequest struct {
 	SecretKey    string `json:"secret_key"`
 	BaseURL      string `json:"base_url"`
 	DefaultModel string `json:"default_model"`
+	Kind         string `json:"kind"`
+	AuthHeader   string `json:"auth_header"`
+	AuthPrefix   string `json:"auth_prefix"`
 }
 
 type KeySafeView struct {
@@ -41,6 +44,48 @@ type KeySafeView struct {
 	VirtualToken string `json:"virtual_token"`
 	DefaultModel string `json:"default_model"`
 	Active       bool   `json:"active"`
+	Kind         string `json:"kind"`
+	BaseURL      string `json:"base_url"`
+	AuthHeader   string `json:"auth_header"`
+}
+
+func isServiceKey(rec *core.Record) bool {
+	return rec.GetString("kind") == "service"
+}
+
+// Só chave de IA: usada por /v1, Sexta-Feira e auto-ativação
+func onlyAI(recs []*core.Record) []*core.Record {
+	var out []*core.Record
+	for _, r := range recs {
+		if !isServiceKey(r) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func keyView(rec *core.Record) KeySafeView {
+	masked := rec.GetString("masked_key")
+	if masked == "" {
+		masked = maskSecret(decryptSecretAtRest(rec.GetString("secret_key")))
+	}
+	v := KeySafeView{
+		Id:         rec.Id,
+		Alias:      rec.GetString("alias"),
+		Provider:   rec.GetString("provider"),
+		MaskedKey:  masked,
+		Active:     rec.GetBool("active"),
+		Kind:       "ai",
+		AuthHeader: rec.GetString("auth_header"),
+	}
+	if isServiceKey(rec) {
+		v.Kind = "service"
+		v.BaseURL = rec.GetString("base_url")
+		return v
+	}
+	v.VirtualToken = "kh-" + strings.ToLower(v.Alias)
+	v.DefaultModel = rec.GetString("default_model")
+	return v
 }
 
 func maskSecret(secret string) string {
@@ -66,8 +111,7 @@ func getOrCreateMasterKey() []byte {
 	}
 	newKey := make([]byte, 32)
 	if _, err := io.ReadFull(rand.Reader, newKey); err != nil {
-		sum := md5.Sum([]byte("keyhybrid-fallback-seed"))
-		return append(sum[:], sum[:]...)
+		log.Fatal("[KeyHybrid] falha ao gerar chave mestra: ", err) // nunca semente fixa
 	}
 	_ = os.WriteFile(keyPath, newKey, 0600)
 	return newKey
@@ -152,6 +196,11 @@ func resolveProviderURL(provider string, customURL string) string {
 }
 
 func main() {
+	// "run" é o kh run: não pode abrir pb_data ao lado do binário
+	if len(os.Args) > 1 && os.Args[1] == "run" {
+		os.Exit(runCmd(os.Args[2:]))
+	}
+
 	app := pocketbase.New()
 
 	// 1. Inicializar coleção "vault_keys" no SQLite
@@ -190,6 +239,15 @@ func main() {
 			collection.Fields.Add(&core.BoolField{
 				Name: "active",
 			})
+			collection.Fields.Add(&core.TextField{
+				Name: "kind",
+			})
+			collection.Fields.Add(&core.TextField{
+				Name: "auth_header",
+			})
+			collection.Fields.Add(&core.TextField{
+				Name: "auth_prefix",
+			})
 
 			collection.AddIndex("idx_vault_provider_alias", false, "provider, alias", "")
 
@@ -198,9 +256,13 @@ func main() {
 			}
 		} else {
 			col, err := app.FindCollectionByNameOrId("vault_keys")
-			if err == nil && col.Fields.GetByName("masked_key") == nil {
-				col.Fields.Add(&core.TextField{Name: "masked_key"})
-				_ = app.Save(col)
+			if err == nil {
+				for _, name := range []string{"masked_key", "kind", "auth_header", "auth_prefix"} {
+					if col.Fields.GetByName(name) == nil {
+						col.Fields.Add(&core.TextField{Name: name})
+						_ = app.Save(col)
+					}
+				}
 			}
 		}
 
@@ -223,11 +285,23 @@ func main() {
 
 	// 2. Rotas do Gateway e Gerenciamento Seguro de Chaves
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
-		// Permitir chamadas diretas do WebView local (CORS)
+		cliToken := loadOrCreateCLIToken()
+
+		// Guarda de entrada: Host loopback (anti DNS rebinding) e Origin só da interface local
 		e.Router.BindFunc(func(evt *core.RequestEvent) error {
-			evt.Response.Header().Set("Access-Control-Allow-Origin", "*")
+			if !hostAllowed(evt.Request.Host) {
+				return evt.ForbiddenError("Host não permitido", nil)
+			}
+			origin := evt.Request.Header.Get("Origin")
+			if origin != "" && !originAllowed(origin, evt.Request.Host) {
+				return evt.ForbiddenError("Origem não permitida", nil)
+			}
+			if origin != "" {
+				evt.Response.Header().Set("Access-Control-Allow-Origin", origin)
+			}
+			evt.Response.Header().Add("Vary", "Origin")
 			evt.Response.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
-			evt.Response.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			evt.Response.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-KeyHybrid-Token")
 			if evt.Request.Method == http.MethodOptions {
 				return evt.NoContent(http.StatusNoContent)
 			}
@@ -251,17 +325,18 @@ func main() {
 				return evt.JSON(http.StatusOK, []KeySafeView{})
 			}
 
-			// Se houver chaves salvas e nenhuma estiver marcada como ativa, ativar a primeira automaticamente
+			// Se houver chaves de IA e nenhuma estiver marcada como ativa, ativar a primeira automaticamente
+			aiKeys := onlyAI(records)
 			hasActive := false
-			for _, rec := range records {
+			for _, rec := range aiKeys {
 				if rec.GetBool("active") {
 					hasActive = true
 					break
 				}
 			}
-			if !hasActive && len(records) > 0 {
-				records[0].Set("active", true)
-				_ = app.Save(records[0])
+			if !hasActive && len(aiKeys) > 0 {
+				aiKeys[0].Set("active", true)
+				_ = app.Save(aiKeys[0])
 			}
 
 			// Ordenar: chave ativa primeiro, depois por alias
@@ -276,32 +351,20 @@ func main() {
 
 			result := make([]KeySafeView, 0, len(records))
 			for _, rec := range records {
-				alias := rec.GetString("alias")
-				masked := rec.GetString("masked_key")
-				if masked == "" {
-					masked = maskSecret(decryptSecretAtRest(rec.GetString("secret_key")))
+				if !isServiceKey(rec) {
+					defaultModel := rec.GetString("default_model")
+					if defaultModel == "" || defaultModel == "google/gemini-2.0-flash-001" {
+						rec.Set("default_model", "openrouter/auto")
+						_ = app.Save(rec)
+					}
 				}
-				defaultModel := rec.GetString("default_model")
-				if defaultModel == "" || defaultModel == "google/gemini-2.0-flash-001" {
-					defaultModel = "openrouter/auto"
-					rec.Set("default_model", defaultModel)
-					_ = app.Save(rec)
-				}
-				result = append(result, KeySafeView{
-					Id:           rec.Id,
-					Alias:        alias,
-					Provider:     rec.GetString("provider"),
-					MaskedKey:    masked,
-					VirtualToken: "kh-" + strings.ToLower(alias),
-					DefaultModel: defaultModel,
-					Active:       rec.GetBool("active"),
-				})
+				result = append(result, keyView(rec))
 			}
 
 			return evt.JSON(http.StatusOK, result)
 		})
 
-		// Cadastrar ou atualizar uma chave pelo Alias
+		// Cadastrar ou atualizar uma chave pelo Alias: "ai" (padrão) ou "service" (qualquer API via /proxy e kh run)
 		e.Router.POST("/api/keyhybrid/keys", func(evt *core.RequestEvent) error {
 			var req KeyCreateRequest
 			if err := evt.BindBody(&req); err != nil {
@@ -311,15 +374,45 @@ func main() {
 			req.Alias = strings.TrimSpace(req.Alias)
 			req.SecretKey = strings.TrimSpace(req.SecretKey)
 			req.Provider = strings.TrimSpace(strings.ToLower(req.Provider))
+			req.Kind = strings.TrimSpace(strings.ToLower(req.Kind))
+			if req.Kind == "" {
+				req.Kind = "ai"
+			}
+			if req.Kind != "ai" && req.Kind != "service" {
+				return evt.BadRequestError("Tipo de chave inválido: use ai ou service", nil)
+			}
 
 			if req.Alias == "" || req.SecretKey == "" {
 				return evt.BadRequestError("O nome (alias) e a chave secreta são obrigatórios", nil)
 			}
 			if req.Provider == "" {
 				req.Provider = "openrouter"
+				if req.Kind == "service" {
+					req.Provider = "outro"
+				}
 			}
-			if req.DefaultModel == "" || req.DefaultModel == "google/gemini-2.0-flash-001" {
+			if req.Kind == "ai" && (req.DefaultModel == "" || req.DefaultModel == "google/gemini-2.0-flash-001") {
 				req.DefaultModel = "openrouter/auto"
+			}
+
+			baseURL := req.BaseURL
+			authHeader, authPrefix := "", ""
+			if req.Kind == "service" {
+				if !aliasRe.MatchString(req.Alias) {
+					return evt.BadRequestError("Alias inválido: use letras, números, ponto, traço ou sublinhado (até 64)", nil)
+				}
+				base, err := validateServiceBaseURL(req.BaseURL)
+				if err != nil {
+					return evt.BadRequestError(err.Error(), nil)
+				}
+				baseURL = base
+				authHeader = strings.TrimSpace(req.AuthHeader)
+				authPrefix = req.AuthPrefix
+				if authHeader == "" {
+					authHeader, authPrefix = "Authorization", "Bearer "
+				} else if !authHeaderRe.MatchString(authHeader) {
+					return evt.BadRequestError("Cabeçalho de autenticação inválido", nil)
+				}
 			}
 
 			collection, err := app.FindCollectionByNameOrId("vault_keys")
@@ -332,7 +425,7 @@ func main() {
 			for _, r := range allRecords {
 				if strings.EqualFold(r.GetString("alias"), req.Alias) {
 					record = r
-				} else if r.GetBool("active") {
+				} else if r.GetBool("active") && req.Kind == "ai" {
 					r.Set("active", false)
 					_ = app.Save(r)
 				}
@@ -344,37 +437,35 @@ func main() {
 
 			record.Set("alias", req.Alias)
 			record.Set("provider", req.Provider)
+			record.Set("kind", req.Kind)
 			record.Set("secret_key", encryptSecretAtRest(req.SecretKey))
 			record.Set("masked_key", maskSecret(req.SecretKey))
-			record.Set("base_url", req.BaseURL)
+			record.Set("base_url", baseURL)
+			record.Set("auth_header", authHeader)
+			record.Set("auth_prefix", authPrefix)
 			record.Set("default_model", req.DefaultModel)
-			record.Set("active", true)
+			record.Set("active", req.Kind == "ai") // "ativo" é só de IA
 
 			if err := app.Save(record); err != nil {
 				return evt.InternalServerError("Erro ao salvar chave no cofre", err)
 			}
 
-			return evt.JSON(http.StatusOK, KeySafeView{
-				Id:           record.Id,
-				Alias:        req.Alias,
-				Provider:     req.Provider,
-				MaskedKey:    maskSecret(req.SecretKey),
-				VirtualToken: "kh-" + strings.ToLower(req.Alias),
-				DefaultModel: req.DefaultModel,
-				Active:       true,
-			})
+			return evt.JSON(http.StatusOK, keyView(record))
 		})
 
-		// Ativar uma chave específica como padrão
+		// Ativar uma chave específica como padrão (só IA)
 		e.Router.POST("/api/keyhybrid/keys/{id}/activate", func(evt *core.RequestEvent) error {
 			id := evt.Request.PathValue("id")
 			target, err := app.FindRecordById("vault_keys", id)
 			if err != nil {
 				return evt.NotFoundError("Chave não encontrada", err)
 			}
+			if isServiceKey(target) {
+				return evt.BadRequestError("Chave de serviço não é ativada: use o alias em /proxy ou kh run", nil)
+			}
 
 			allRecords, _ := app.FindAllRecords("vault_keys")
-			for _, r := range allRecords {
+			for _, r := range onlyAI(allRecords) {
 				r.Set("active", r.Id == target.Id)
 				_ = app.Save(r)
 			}
@@ -395,6 +486,85 @@ func main() {
 			}
 
 			return evt.JSON(http.StatusOK, map[string]any{"status": "deleted", "id": id})
+		})
+
+		// Proxy de chave de serviço: o cliente chama /proxy/<alias>/... e a chave entra só no cabeçalho
+		e.Router.Any("/proxy/{alias}/{path...}", func(evt *core.RequestEvent) error {
+			if !tokenValid(evt.Request, cliToken) {
+				return evt.UnauthorizedError("Token local inválido", nil)
+			}
+			alias := evt.Request.PathValue("alias")
+			allRecords, _ := app.FindAllRecords("vault_keys")
+			var rec *core.Record
+			for _, r := range allRecords {
+				if isServiceKey(r) && strings.EqualFold(r.GetString("alias"), alias) {
+					rec = r
+					break
+				}
+			}
+			if rec == nil {
+				return evt.NotFoundError("Chave de serviço não encontrada", nil)
+			}
+
+			parts := strings.SplitN(evt.Request.URL.EscapedPath(), "/", 4)
+			rest := ""
+			if len(parts) == 4 {
+				rest = parts[3]
+			}
+			target, err := buildProxyTarget(rec.GetString("base_url"), rest, evt.Request.URL.RawQuery)
+			if err != nil {
+				return evt.BadRequestError("Caminho fora do destino da chave", err)
+			}
+
+			authName, authPrefix := rec.GetString("auth_header"), rec.GetString("auth_prefix")
+			if authName == "" {
+				authName, authPrefix = "Authorization", "Bearer "
+			}
+			status := forwardToService(evt.Response, evt.Request, target, authName, authPrefix+decryptSecretAtRest(rec.GetString("secret_key")))
+			log.Printf("[KeyHybrid] proxy %s %s /%s -> %d\n", alias, evt.Request.Method, rest, status)
+			return nil
+		})
+
+		// Segredos em claro só para o kh run: token local e nenhuma requisição vinda de navegador
+		e.Router.POST("/api/keyhybrid/reveal", func(evt *core.RequestEvent) error {
+			if evt.Request.Header.Get("Origin") != "" {
+				return evt.ForbiddenError("Reveal não aceita requisição de navegador", nil)
+			}
+			if !tokenValid(evt.Request, cliToken) {
+				return evt.UnauthorizedError("Token local inválido", nil)
+			}
+			var req struct {
+				Aliases []string `json:"aliases"`
+			}
+			if err := json.NewDecoder(io.LimitReader(evt.Request.Body, 64<<10)).Decode(&req); err != nil {
+				return evt.BadRequestError("JSON inválido", err)
+			}
+
+			allRecords, _ := app.FindAllRecords("vault_keys")
+			secrets := map[string]string{}
+			var missing []string
+			for _, alias := range req.Aliases {
+				var rec *core.Record
+				for _, r := range allRecords {
+					if strings.EqualFold(r.GetString("alias"), alias) {
+						rec = r
+						break
+					}
+				}
+				if rec == nil {
+					missing = append(missing, alias)
+					continue
+				}
+				secrets[alias] = decryptSecretAtRest(rec.GetString("secret_key"))
+			}
+
+			evt.Response.Header().Set("Cache-Control", "no-store")
+			if len(missing) > 0 {
+				log.Printf("[KeyHybrid] reveal: alias não cadastrado: %s\n", strings.Join(missing, ", "))
+				return evt.JSON(http.StatusNotFound, map[string]any{"message": "Alias não cadastrado", "missing": missing})
+			}
+			log.Printf("[KeyHybrid] reveal: %s\n", strings.Join(req.Aliases, ", "))
+			return evt.JSON(http.StatusOK, map[string]any{"secrets": secrets})
 		})
 
 		// Handler Universal compatível com OpenAI / OpenRouter (/v1/chat/completions e /api/ai/proxy/chat)
@@ -423,6 +593,7 @@ func main() {
 			}
 
 			allRecords, _ := app.FindAllRecords("vault_keys")
+			allRecords = onlyAI(allRecords)
 			var matchedRecord *core.Record
 
 			// 1. Tentar encontrar pelo alias solicitado
@@ -577,6 +748,7 @@ func main() {
 				requestedAlias = strings.TrimPrefix(strings.ToLower(requestedAlias), "kh-")
 			}
 			allRecords, _ := app.FindAllRecords("vault_keys")
+			allRecords = onlyAI(allRecords)
 			var matchedRecord *core.Record
 			if requestedAlias != "" {
 				for _, r := range allRecords {
