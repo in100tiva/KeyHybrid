@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -127,5 +129,17 @@ func TestMaskWriter(t *testing.T) {
 		if got := buf.String(); got != want {
 			t.Errorf("pedaços de %d: saída %q, want %q", n, got, want)
 		}
+	}
+}
+
+func TestDataDirFicaNoHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	want := filepath.Join(home, ".keyhybrid", "pb_data")
+	if got := dataDir(); got != want {
+		t.Fatalf("dataDir() = %q, want %q", got, want)
+	}
+	if fi, err := os.Stat(want); err != nil || !fi.IsDir() {
+		t.Fatalf("dataDir() não criou %q: %v", want, err)
 	}
 }

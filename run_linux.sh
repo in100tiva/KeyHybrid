@@ -15,8 +15,12 @@ if ! nc -z 127.0.0.1 8090 >/dev/null 2>&1; then
   sleep 1
 fi
 
-# 2. Iniciar a interface Desktop Tauri
+# 2. Iniciar a interface Desktop Tauri (release, se já compilado pelo install_linux.sh)
 echo "[KeyHybrid] Abrindo interface Desktop..."
+RELEASE_BIN="$ROOT_DIR/apps/desktop/src-tauri/target/release/desktop"
+if [ -x "$RELEASE_BIN" ]; then
+  exec "$RELEASE_BIN"
+fi
 cd "$ROOT_DIR/apps/desktop"
 if command -v bun >/dev/null 2>&1; then
   bun run tauri dev

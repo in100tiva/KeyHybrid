@@ -117,6 +117,30 @@ func getOrCreateMasterKey() []byte {
 	return newKey
 }
 
+// O cofre mora em ~/.keyhybrid/pb_data, não ao lado do binário: cada launcher
+// (app, run_linux.sh, systemd) subia uma cópia diferente e abria um cofre vazio.
+// --dir continua valendo por cima.
+func dataDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "pb_data"
+	}
+	dir := filepath.Join(home, ".keyhybrid", "pb_data")
+	if _, err := os.Stat(dir); err == nil {
+		return dir
+	}
+	// Instalação antiga: cofre ao lado do binário. Segue usando até ser movido.
+	if exe, err := os.Executable(); err == nil {
+		legado := filepath.Join(filepath.Dir(exe), "pb_data")
+		if _, err := os.Stat(filepath.Join(legado, "data.db")); err == nil {
+			log.Println("[KeyHybrid] usando cofre antigo em", legado, "- mova para", dir)
+			return legado
+		}
+	}
+	_ = os.MkdirAll(dir, 0700)
+	return dir
+}
+
 func encryptSecretAtRest(plain string) string {
 	plain = strings.TrimSpace(plain)
 	if plain == "" || strings.HasPrefix(plain, "enc:v1:") {
@@ -201,7 +225,7 @@ func main() {
 		os.Exit(runCmd(os.Args[2:]))
 	}
 
-	app := pocketbase.New()
+	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: dataDir()})
 
 	// 1. Inicializar coleção "vault_keys" no SQLite
 	app.OnBootstrap().BindFunc(func(e *core.BootstrapEvent) error {
