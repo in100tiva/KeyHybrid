@@ -177,13 +177,20 @@ chmod +x install_linux.sh run_linux.sh
 O script `install_linux.sh` irá:
 1. Verificar/instalar as bibliotecas de sistema necessárias;
 2. Compilar o binário nativo `apps/server/keyhybrid-server` em Go e copiá-lo para `~/.keyhybrid/bin/keyhybrid-server`;
-3. Instalar as dependências do frontend em `apps/desktop`.
+3. Instalar o gateway como serviço `systemd --user` (`keyhybrid.service`): ele sobe sozinho a cada login, então o `kh run` funciona sem abrir o app;
+4. Compilar o app desktop em release e criar o atalho **KeyHybrid** no menu de aplicativos.
+
+O cofre fica em `~/.keyhybrid/pb_data` (antes ficava ao lado do binário, e cada forma de abrir podia ler um cofre diferente). Uma instalação antiga com `apps/server/pb_data` é copiada para lá na primeira instalação.
 
 ### 3. Executar no Linux
+
+Abra **KeyHybrid** pelo menu de aplicativos, ou:
 
 ```bash
 ./run_linux.sh
 ```
+
+Status do gateway: `systemctl --user status keyhybrid`.
 
 ### 4. Gerar Instalador Nativo do Linux (`.deb` / `.AppImage` / `.rpm`)
 
