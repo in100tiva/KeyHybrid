@@ -398,7 +398,8 @@ func main() {
 			baseURL := req.BaseURL
 			authHeader, authPrefix := "", ""
 			if req.Kind == "service" {
-				if !aliasRe.MatchString(req.Alias) {
+				// só pontos ("." ou "..") viraria segmento de caminho na URL do proxy
+				if !aliasRe.MatchString(req.Alias) || strings.Trim(req.Alias, ".") == "" {
 					return evt.BadRequestError("Alias inválido: use letras, números, ponto, traço ou sublinhado (até 64)", nil)
 				}
 				base, err := validateServiceBaseURL(req.BaseURL)

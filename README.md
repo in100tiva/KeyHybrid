@@ -225,7 +225,7 @@ O script `run_windows.bat` compila automaticamente o `apps\server\keyhybrid-serv
 ```powershell
 # 1. Compilar o servidor Go
 cd apps\server
-go build -o keyhybrid-server.exe main.go
+go build -o keyhybrid-server.exe .
 
 # 2. Compilar o instalador Desktop Tauri
 cd ..\desktop

@@ -6,7 +6,7 @@ echo [KeyHybrid] Verificando servidor Gateway Go (127.0.0.1:8090)...
 if not exist "apps\server\keyhybrid-server.exe" (
     echo [KeyHybrid] Compilando keyhybrid-server.exe...
     pushd apps\server
-    go build -o keyhybrid-server.exe main.go
+    go build -o keyhybrid-server.exe .
     popd
 )
 
