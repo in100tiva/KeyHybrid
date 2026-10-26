@@ -11,6 +11,8 @@
     default_model: string;
     active: boolean;
     updated: string;
+    kind?: string | null;
+    base_url?: string | null;
   }
 
   const gatewayUrl = "http://127.0.0.1:8090";
@@ -18,18 +20,35 @@
   // Estado real do Gateway e Chaves
   let gatewayOnline = $state<boolean>(false);
   let keys = $state<KeySafeView[]>([]);
-  let selectedKey = $derived(keys.find((k) => k.active) || keys[0] || null);
+  // Chave escolhida na lista (serviço não ativa, então precisa disso para aparecer no passo 2)
+  let viewedKeyId = $state("");
+  let selectedKey = $derived(
+    keys.find((k) => k.id === viewedKeyId) ||
+      keys.find((k) => k.active) ||
+      keys[0] ||
+      null
+  );
+
+  // Serviços (não-IA): URL base predefinida e variável sugerida para o `kh run`
+  const SERVICES: Record<string, { baseUrl: string; envVar?: string }> = {
+    vercel: { baseUrl: "https://api.vercel.com", envVar: "VERCEL_TOKEN" },
+    supabase: { baseUrl: "https://api.supabase.com", envVar: "SUPABASE_ACCESS_TOKEN" },
+    github: { baseUrl: "https://api.github.com", envVar: "GH_TOKEN" },
+    outro: { baseUrl: "" },
+  };
 
   // Inputs para adicionar nova chave na barra inferior (/Key | nome | sk-...)
   let newAlias = $state("");
   let newSecret = $state("");
-  let newProvider = $state<"openrouter" | "gemini" | "anthropic">("openrouter");
+  let newProvider = $state("openrouter");
+  let newBaseUrl = $state("");
+  let isServiceProvider = $derived(newProvider in SERVICES);
   let newModel = $state("openrouter/auto");
   let isSaving = $state(false);
   let statusNotice = $state("");
 
   // Feedback de cópia rápida
-  let copiedItem = $state<"" | "token" | "url" | "curl" | "masked">("");
+  let copiedItem = $state<"" | "token" | "url" | "curl" | "masked" | "run">("");
 
   // Estado real do Bloqueio por PIN de 6 dígitos (Referência 3)
   let isLocked = $state(false);
@@ -59,11 +78,12 @@
   let currentAudio: HTMLAudioElement | null = null;
   let lastFridayEventId = 0;
 
-  const PROVIDERS: Array<"openrouter" | "gemini" | "anthropic"> = [
-    "openrouter",
-    "gemini",
-    "anthropic",
-  ];
+  function envVarFor(provider: string, alias: string): string {
+    const preset = SERVICES[provider]?.envVar;
+    if (preset) return preset;
+    const base = alias.toUpperCase().replace(/[^A-Z0-9]/g, "_");
+    return `${/^[0-9]/.test(base) ? "_" : ""}${base}_TOKEN`;
+  }
 
   const MODELS = [
     "openrouter/auto",
@@ -156,7 +176,11 @@
     }
 
     if (!rawSecret) {
-      showNotice("Cole sua chave secreta (ex: sk-or-v1-...) para salvar.");
+      showNotice(
+        isServiceProvider
+          ? "Cole o token para salvar."
+          : "Cole sua chave secreta (ex: sk-or-v1-...) para salvar."
+      );
       return;
     }
 
@@ -167,7 +191,23 @@
       rawAlias = exists ? `${base}-${keys.length + 1}` : base;
     }
 
-    const alias = rawAlias.replace(/\s+/g, "-").toLowerCase();
+    let alias = rawAlias.replace(/\s+/g, "-").toLowerCase();
+    if (isServiceProvider) {
+      // Alias de serviço vai na URL do proxy e no kh run: só [a-z0-9._-], até 64
+      alias = alias.replace(/[^a-z0-9._-]/g, "").slice(0, 64);
+      if (!alias || /^\.+$/.test(alias)) {
+        showNotice("Apelido inválido: use letras, números, ponto, traço ou underline.");
+        return;
+      }
+    }
+
+    const baseUrl = newBaseUrl.trim();
+    if (isServiceProvider && !/^https:\/\/\S+$/.test(baseUrl)) {
+      showNotice("A URL base precisa começar com https://");
+      return;
+    }
+
+    const kind = isServiceProvider ? "service" : "ai";
 
     isSaving = true;
     try {
@@ -180,6 +220,8 @@
           provider: newProvider,
           secret_key: rawSecret,
           default_model: newModel,
+          kind,
+          base_url: isServiceProvider ? baseUrl : undefined,
         }),
       });
 
@@ -196,6 +238,8 @@
           provider: newProvider,
           secretKey: rawSecret,
           defaultModel: newModel,
+          kind,
+          baseUrl: isServiceProvider ? baseUrl : null,
         });
       } catch {
         // Ignora caso o binário Rust ainda não tenha sido reiniciado
@@ -204,7 +248,11 @@
       newAlias = "";
       newSecret = "";
       await syncVault();
-      showNotice(`Chave '${alias}' salva e ativa!`);
+      showNotice(
+        isServiceProvider
+          ? `Serviço '${alias}' salvo.`
+          : `Chave '${alias}' salva e ativa!`
+      );
     } catch (err: any) {
       showNotice(`Erro: ${err.message || err}`);
     } finally {
@@ -214,7 +262,7 @@
 
   // Ativar chave selecionada como padrão do Proxy
   async function handleActivateKey(k: KeySafeView) {
-    if (k.active) return;
+    if (k.active || k.kind === "service") return;
     try {
       await fetch(`${gatewayUrl}/api/keyhybrid/keys/${k.id}/activate`, {
         method: "POST",
@@ -248,10 +296,16 @@
     }
   }
 
-  // Alternar provedor no pill
-  function cycleProvider() {
-    const idx = PROVIDERS.indexOf(newProvider);
-    newProvider = PROVIDERS[(idx + 1) % PROVIDERS.length];
+  // Trocar provedor da nova chave (serviço preenche a URL base predefinida)
+  function selectProvider(p: string) {
+    newProvider = p;
+    newBaseUrl = SERVICES[p]?.baseUrl ?? "";
+  }
+
+  // Serviço: a lista só seleciona (não ativa) para mostrar os comandos no passo 2
+  function selectKey(k: KeySafeView) {
+    viewedKeyId = k.id;
+    if (k.kind !== "service") handleActivateKey(k);
   }
 
   // Alternar modelo padrão no pill
@@ -261,7 +315,7 @@
   }
 
   // Copiar dados seguros para usar no Antigravity / Terminal
-  function copyText(type: "token" | "url" | "curl" | "masked", text: string) {
+  function copyText(type: "token" | "url" | "curl" | "masked" | "run", text: string) {
     navigator.clipboard.writeText(text);
     copiedItem = type;
     setTimeout(() => {
@@ -273,6 +327,19 @@
     const token = k ? k.virtual_token : "kh-default";
     const model = k?.default_model || newModel;
     return `curl http://127.0.0.1:8090/v1/chat/completions -H "Content-Type: application/json" -H "Authorization: Bearer ${token}" -d "{\\"model\\":\\"${model}\\",\\"messages\\":[{\\"role\\":\\"user\\",\\"content\\":\\"Olá\\"}]}"`;
+  }
+
+  // Serviço: `kh run` injeta a chave na variável; o proxy põe a chave no destino
+  function getRunSnippet(k: KeySafeView): string {
+    return `kh run --env ${envVarFor(k.provider, k.alias)}=${k.alias} -- <comando>`;
+  }
+
+  function getProxyUrl(k: KeySafeView): string {
+    return `http://127.0.0.1:8090/proxy/${k.alias}/`;
+  }
+
+  function getProxyCurlSnippet(k: KeySafeView): string {
+    return `curl ${getProxyUrl(k)} -H "X-KeyHybrid-Token: $(cat ~/.keyhybrid/.cli.token)"`;
   }
 
   // Lógica Real do PIN de 6 dígitos (Windows DPAPI)
@@ -849,8 +916,8 @@
                 <!-- svelte-ignore a11y_click_events_have_key_events -->
                 <!-- svelte-ignore a11y_no_static_element_interactions -->
                 <div
-                  class="key-row {k.active ? 'selected' : ''}"
-                  onclick={() => handleActivateKey(k)}
+                  class="key-row {selectedKey?.id === k.id ? 'selected' : ''}"
+                  onclick={() => selectKey(k)}
                 >
                   <div class="key-row-left">
                     {#if k.active}
@@ -862,7 +929,9 @@
                   </div>
 
                   <div class="key-row-right">
-                    {#if k.active}
+                    {#if k.kind === "service"}
+                      <span class="linked-tag">serviço · {k.provider}</span>
+                    {:else if k.active}
                       <span class="team-pill">ACTIVE</span>
                     {:else}
                       <span class="linked-tag">{k.provider}</span>
@@ -908,6 +977,41 @@
           </div>
 
           <div class="access-list">
+            {#if selectedKey?.kind === "service"}
+              <!-- Serviço: sem token virtual nem /v1; a chave só vai pelo kh run ou pelo proxy -->
+              <button
+                class="access-row {copiedItem === 'run' ? 'active-row' : ''}"
+                onclick={() => selectedKey && copyText("run", getRunSnippet(selectedKey))}
+              >
+                <span class="avatar-badge amber">&gt;_</span>
+                <span class="access-label">Comando kh run</span>
+                <span class="access-check">
+                  {copiedItem === "run" ? "✓" : "Copiar"}
+                </span>
+              </button>
+
+              <button
+                class="access-row {copiedItem === 'url' ? 'active-row' : ''}"
+                onclick={() => selectedKey && copyText("url", getProxyUrl(selectedKey))}
+              >
+                <span class="avatar-badge blue">⇄</span>
+                <span class="access-label">127.0.0.1:8090/proxy/{selectedKey.alias}/</span>
+                <span class="access-check">
+                  {copiedItem === "url" ? "✓" : "URL"}
+                </span>
+              </button>
+
+              <button
+                class="access-row {copiedItem === 'curl' ? 'active-row' : ''}"
+                onclick={() => selectedKey && copyText("curl", getProxyCurlSnippet(selectedKey))}
+              >
+                <span class="avatar-badge purple">✦</span>
+                <span class="access-label">Comando cURL (token local)</span>
+                <span class="access-check">
+                  {copiedItem === "curl" ? "✓" : "Copiar"}
+                </span>
+              </button>
+            {:else}
             <!-- Item 1: Copiar Token Virtual -->
             <button
               class="access-row {copiedItem === 'token' ? 'active-row' : ''}"
@@ -960,21 +1064,39 @@
               <span class="access-label">Ver Card do Token</span>
               <span class="access-check">Abrir</span>
             </button>
+            {/if}
           </div>
         </div>
       </div>
 
       <!-- FAIXA DE 3 PILLS ABAIXO DO QUADRO (EXATAMENTE COMO NO PLAN WISE) -->
       <div class="Quick-pills-row">
-        <button class="config-pill" onclick={cycleProvider} title="Clique para alternar o provedor da nova chave">
+        <label class="config-pill" title="Provedor da nova chave">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="3" y="4" width="18" height="16" rx="3" />
             <path d="M3 10h18" />
           </svg>
           <span>Provedor</span>
-          <small>{newProvider}</small>
+          <select
+            class="provider-select"
+            aria-label="Provedor da nova chave"
+            value={newProvider}
+            onchange={(e) => selectProvider(e.currentTarget.value)}
+          >
+            <optgroup label="IA">
+              <option value="openrouter">openrouter</option>
+              <option value="gemini">gemini</option>
+              <option value="anthropic">anthropic</option>
+            </optgroup>
+            <optgroup label="Serviços">
+              <option value="vercel">vercel</option>
+              <option value="supabase">supabase</option>
+              <option value="github">github</option>
+              <option value="outro">outro</option>
+            </optgroup>
+          </select>
           <span class="pill-arrow">⌄</span>
-        </button>
+        </label>
 
         <button
           class="config-pill {fridayEnabled ? 'friday-pill-active' : ''} {!hasOpenRouterKey ? 'friday-pill-locked' : ''}"
@@ -1107,10 +1229,19 @@
               }}
             />
 
+            {#if isServiceProvider}
+              <input
+                type="text"
+                class="input-secret input-url"
+                placeholder="URL base (https://…)"
+                bind:value={newBaseUrl}
+              />
+            {/if}
+
             <input
               type="password"
               class="input-secret"
-              placeholder="cole a chave sk-or-v1-..."
+              placeholder={isServiceProvider ? "cole o token" : "cole a chave sk-or-v1-..."}
               bind:value={newSecret}
               onkeydown={(e) => {
                 if (e.key === "Enter") handleSaveKey();
@@ -2047,6 +2178,22 @@
     text-overflow: ellipsis;
   }
 
+  .provider-select {
+    background: transparent;
+    border: none;
+    outline: none;
+    color: #71717a;
+    font-size: 10.5px;
+    cursor: pointer;
+    min-width: 0;
+  }
+
+  .provider-select option,
+  .provider-select optgroup {
+    background: #18181b;
+    color: #f4f4f5;
+  }
+
   .pill-arrow {
     margin-left: auto;
     color: #52525b;
@@ -2154,6 +2301,10 @@
     color: #f4f4f5;
     font-size: 12.5px;
     outline: none;
+  }
+
+  .input-url {
+    flex: 0 0 190px;
   }
 
   .input-alias::placeholder,

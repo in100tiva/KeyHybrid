@@ -21,6 +21,10 @@ pub struct KeySafeView {
     pub active: bool,
     #[serde(default)]
     pub updated: String,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub base_url: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -29,6 +33,10 @@ struct KeyCreatePayload {
     pub provider: String,
     pub secret_key: String,
     pub default_model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
 }
 
 #[tauri::command]
@@ -93,6 +101,8 @@ pub async fn save_vault_key(
     provider: String,
     secret_key: String,
     default_model: String,
+    kind: Option<String>,
+    base_url: Option<String>,
 ) -> Result<KeySafeView, String> {
     let clean_alias = alias.trim().to_string();
     let holder = SecretHolder {
@@ -118,6 +128,8 @@ pub async fn save_vault_key(
         provider,
         secret_key: holder.secret.clone(),
         default_model,
+        kind,
+        base_url,
     };
 
     let resp = client
