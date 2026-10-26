@@ -1,33 +1,171 @@
-# KeyHybrid — Zero-Knowledge API Key Vault & Local AI Gateway
+# 🛡️ KeyHybrid — Zero-Knowledge API Key Vault & Local AI Gateway
 
-O **KeyHybrid** é um cofre desktop minimalista de chaves de API (**OpenRouter, Google Gemini, Anthropic**) e **Reverse Proxy Local Zero-Knowledge** (`http://127.0.0.1:8090/v1`), construído com **Tauri v2 (Rust)**, **Svelte 5** e **Go (PocketBase)**.
+O **KeyHybrid** é um cofre desktop de segurança para chaves de API de Inteligência Artificial (**OpenRouter, Google Gemini, Anthropic**) combinado com um **Reverse Proxy Local Zero-Knowledge** (`http://127.0.0.1:8090/v1`), construído em **Tauri v2 (Rust)**, **Svelte 5** e **Go (PocketBase)**.
 
-Em vez de espalhar chaves reais (`sk-or-v1-...`) em variáveis de ambiente, arquivos `.env`, terminais ou agentes de IA, você cadastra sua chave uma única vez no cofre do **KeyHybrid** e utiliza apenas o **Token Virtual** (`Bearer kh-openrouter`).
-
----
-
-## 🔒 Arquitetura de Segurança
-
-1. **Zero-Knowledge Proxy (`127.0.0.1:8090/v1`):**
-   - Os clientes, agentes de código e scripts enviam apenas `Authorization: Bearer kh-<alias>`.
-   - O Gateway Go intercepta a chamada localmente, descriptografa a chave real em memória RAM apenas no milissegundo do envio para o provedor (`OpenRouter`, `Gemini`, `Anthropic`) e descarta a referência.
-2. **Criptografia Dupla em Repouso (`AES-256-GCM` + Cofre Nativo do SO):**
-   - **No Banco Local (`SQLite`):** Todas as chaves salvas em `vault_keys` são criptografadas em repouso com **AES-256-GCM** (`enc:v1:...`) usando uma chave mestra local de 256 bits (`~/.keyhybrid/.master.key` com permissão `0600`) + campo `Hidden: true` no PocketBase.
-   - **No Sistema Operacional (Rust `keyring` + `zeroize`):** Integração nativa com **Windows DPAPI (Credential Manager)** no Windows e **Linux Secret Service (`libsecret` / `gnome-keyring`)** no Linux, limpando segredos da memória RAM automaticamente via `ZeroizeOnDrop`.
-3. **Bloqueio por PIN de 6 Dígitos:**
-   - Tela de bloqueio rápida por PIN numérico de 6 dígitos armazenado no cofre nativo do sistema operacional (com fallback seguro em `~/.keyhybrid/.pin.vault` para ambientes Linux minimalistas).
-4. **Proxy Multimodal Completo & Fallback Inteligente de Guardrails:**
-   - `POST /v1/chat/completions` (com fallback automático para `openrouter/auto` caso um modelo específico seja bloqueado pelo Guardrail da conta).
-   - `POST /v1/audio/speech` (TTS via OpenRouter: `elevenlabs/eleven-v4-turbo`, `heygen/heygen-voice-1-turbo`).
-   - `POST /v1/videos`, `GET /v1/videos/{id}`, `GET /v1/videos/{id}/content` (Geração de vídeo assíncrona).
-   - `GET /v1/models` (Catálogo completo de modelos).
+Em vez de expor suas chaves reais (`sk-or-v1-...`, `AIza...`, `sk-ant-...`) em arquivos `.env`, histórico de terminal, scripts ou agentes autônomos de código, você armazena a chave real **uma única vez** dentro do cofre criptografado do **KeyHybrid** e utiliza apenas **Tokens Virtuais** (`Bearer kh-openrouter`).
 
 ---
 
-## 🐧 Instalação nos PCs Linux (Ubuntu / Debian / Pop!_OS / Mint)
+## 🏗️ Arquitetura do Sistema
 
-### Pré-requisitos rápidos
-Certifique-se de ter **Go (`>= 1.22`)**, **Rust (`rustup`)** e **Node.js (`>= 20`) / Bun** instalados.
+```mermaid
+flowchart LR
+    subgraph Client["💻 Clientes & Agentes Locais"]
+        CLI["Terminal / cURL / SDK OpenAI"]
+        IDE["Agentes de IA (Cursor, Antigravity, etc.)"]
+        UI["Interface Desktop (Svelte 5 + Tauri v2)"]
+    end
+
+    subgraph SecurityLayer["🔒 Camada de Segurança Nativa (Rust + SO)"]
+        PIN["Bloqueio por PIN de 6 Dígitos"]
+        OSVault["Windows DPAPI / Linux Secret Service\n+ ZeroizeOnDrop (Limpeza de RAM)"]
+    end
+
+    subgraph Gateway["⚡ KeyHybrid Local Gateway (Go :8090)"]
+        Proxy["Reverse Proxy Multimodal\n/v1/chat, /v1/audio, /v1/videos"]
+        AES["Motor Criptográfico AES-256-GCM\n(~/.keyhybrid/.master.key)"]
+        DB[("SQLite Local (pb_data)\nsecret_key = enc:v1:... (Hidden)")]
+    end
+
+    subgraph Providers["☁️ Provedores Upstream"]
+        OR["OpenRouter API\n(LLM, ElevenLabs v4, HeyGen)"]
+        GM["Google Gemini API"]
+        AN["Anthropic API"]
+    end
+
+    CLI -- "Authorization: Bearer kh-openrouter" --> Proxy
+    IDE -- "Authorization: Bearer kh-openrouter" --> Proxy
+    UI <--> PIN
+    PIN <--> OSVault
+    UI <--> Proxy
+    Proxy <--> AES
+    AES <--> DB
+    Proxy -- "Injeta Chave Real em RAM (HTTPS)" --> OR
+    Proxy -- "Injeta Chave Real em RAM (HTTPS)" --> GM
+    Proxy -- "Injeta Chave Real em RAM (HTTPS)" --> AN
+```
+
+### Pilares da Arquitetura de Segurança
+
+1. **Isolamento Zero-Knowledge (`kh-<alias>`):**
+   - Nenhuma ferramenta externa, agente de IA ou script tem acesso à sua chave real.
+   - Os clientes chamam `http://127.0.0.1:8090/v1/...` enviando `Authorization: Bearer kh-openrouter`.
+   - O Gateway Go localiza o registro correspondente, descriptografa a chave real em memória volátil (RAM) apenas no instante de abrir a requisição HTTPS para o provedor externo e jamais retorna a chave em endpoints de listagem.
+2. **Criptografia Dupla em Repouso (`AES-256-GCM` + Cofre do Sistema Operacional):**
+   - **No Banco SQLite (`apps/server/pb_data`):** Cada `secret_key` é criptografada antes de ir para o disco com **AES-256-GCM** (`enc:v1:<nonce+ciphertext>`) utilizando uma chave mestra local de 256 bits gerada com CSPRNG em `~/.keyhybrid/.master.key` (permissão `0600`). Além disso, a coluna possui `Hidden: true` no motor do PocketBase.
+   - **No Sistema Operacional (`apps/desktop/src-tauri/src/vault.rs`):** As credenciais e o PIN de 6 dígitos são protegidos via **Windows DPAPI (Credential Manager)** no Windows e **Linux Secret Service (`libsecret` / `gnome-keyring`)** no Linux (com fallback automático para `~/.keyhybrid/.pin.vault` em ambientes Linux minimalistas). Todos os segredos em Rust implementam `Zeroize` e `ZeroizeOnDrop` para zerar os bytes da memória RAM imediatamente após o uso.
+3. **Auto-Healing & Guardrail Fallback:**
+   - Caso uma requisição na OpenRouter falhe por restrição de modelo em *Guardrail* (`HTTP 404`), o Gateway refaz automaticamente o roteamento para `openrouter/auto` sem interromper o agente cliente.
+4. **Módulo Opcional de Assistente Tática (`/F.R.I.D.A.Y` — Sexta-Feira):**
+   - Habilitado exclusivamente quando há uma chave da OpenRouter ativa no cofre.
+   - Escuta local via `faster-whisper` + `sounddevice` (`apps/server/friday_ear.py`), síntese de voz neural via `elevenlabs/eleven-v4-turbo` e controle local de dispositivos IoT Xiaomi na LAN via protocolo `MiIO UDP 54321` (`AES-128-CBC`).
+
+---
+
+## 📂 Estrutura de Diretórios
+
+```text
+KeyHybrid/
+├── apps/
+│   ├── server/                  # Backend Gateway & Proxy Reverso em Go (PocketBase)
+│   │   ├── main.go              # Servidor HTTP (:8090), Cofre AES-256-GCM, Proxy /v1/* e MiIO UDP
+│   │   ├── friday_ear.py        # Daemon opcional de voz local (faster-whisper + sounddevice)
+│   │   ├── go.mod               # Dependências Go
+│   │   └── go.sum
+│   └── desktop/                 # Aplicativo Desktop Nativo (Svelte 5 + Tauri v2)
+│       ├── src/
+│       │   └── routes/
+│       │       └── +page.svelte # UI Minimalista, Constelação Orbital, Efeito macOS Genie e PIN
+│       └── src-tauri/           # Core Nativo em Rust
+│           ├── Cargo.toml       # Dependências multiplataforma (Windows DPAPI / Linux Secret Service)
+│           └── src/
+│               ├── lib.rs       # Auto-starter do servidor Go e controle de janela sem bordas
+│               ├── vault.rs     # Integração com Keyring do SO + ZeroizeOnDrop + PIN de 6 dígitos
+│               └── gateway.rs   # Ponte assíncrona Rust <-> Gateway Go
+├── install_linux.sh             # Instalador automatizado para Linux
+├── run_linux.sh                 # Inicializador rápido para Linux (Gateway + Desktop)
+├── run_windows.bat              # Inicializador rápido de 1 clique para Windows
+├── run_server.bat               # Inicia apenas o servidor Go no Windows
+└── run_desktop.bat              # Inicia apenas a interface Tauri no Windows
+```
+
+---
+
+## 🐧 Guia de Instalação no Linux (PCs do Escritório)
+
+### 1. Pré-requisitos de Sistema
+
+Escolha o comando correspondente à distribuição Linux dos computadores do escritório:
+
+#### Ubuntu / Debian / Linux Mint / Pop!_OS:
+```bash
+sudo apt-get update && sudo apt-get install -y \
+  libwebkit2gtk-4.1-dev \
+  build-essential \
+  curl \
+  wget \
+  file \
+  libxdo-dev \
+  libssl-dev \
+  libayatana-appindicator3-dev \
+  librsvg2-dev \
+  libsecret-1-dev \
+  libasound2-dev \
+  portaudio19-dev \
+  ffmpeg \
+  golang-go \
+  nodejs \
+  npm
+```
+
+#### Fedora / RHEL / CentOS:
+```bash
+sudo dnf install -y \
+  webkit2gtk4.1-devel \
+  openssl-devel \
+  curl \
+  wget \
+  file \
+  libappindicator-gtk3-devel \
+  librsvg2-devel \
+  libsecret-devel \
+  alsa-lib-devel \
+  portaudio-devel \
+  ffmpeg \
+  golang \
+  nodejs \
+  npm
+```
+
+#### Arch Linux / Manjaro:
+```bash
+sudo pacman -S --needed \
+  webkit2gtk-4.1 \
+  base-devel \
+  curl \
+  wget \
+  file \
+  openssl \
+  libappindicator-gtk3 \
+  librsvg \
+  libsecret \
+  alsa-lib \
+  portaudio \
+  ffmpeg \
+  go \
+  nodejs \
+  npm
+```
+
+#### Instalar o Rust (caso ainda não esteja instalado na máquina):
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+source "$HOME/.cargo/env"
+```
+
+---
+
+### 2. Clonar e Instalar no Linux (1 Comando)
 
 ```bash
 git clone https://github.com/in100tiva/KeyHybrid.git
@@ -36,37 +174,120 @@ chmod +x install_linux.sh run_linux.sh
 ./install_linux.sh
 ```
 
-### Executar no Linux
+O script `install_linux.sh` irá:
+1. Verificar/instalar as bibliotecas de sistema necessárias;
+2. Compilar o binário nativo `apps/server/keyhybrid-server` em Go e copiá-lo para `~/.keyhybrid/bin/keyhybrid-server`;
+3. Instalar as dependências do frontend em `apps/desktop`.
+
+### 3. Executar no Linux
+
 ```bash
 ./run_linux.sh
 ```
 
-### Gerar pacote instalável `.deb` / `.AppImage` no Linux
+### 4. Gerar Instalador Nativo do Linux (`.deb` / `.AppImage` / `.rpm`)
+
+Se quiser gerar o pacote instalável para distribuir nos outros PCs Linux do escritório:
+
 ```bash
 cd apps/desktop
+npm run tauri build
+```
+Os pacotes prontos ficarão em `apps/desktop/src-tauri/target/release/bundle/`.
+
+---
+
+## 🪟 Guia de Instalação no Windows (Windows 10 / 11)
+
+### 1. Pré-requisitos no Windows
+
+Abra o **PowerShell** e instale as ferramentas base via `winget` (caso ainda não possua):
+
+```powershell
+winget install GoLang.Go
+winget install Rustlang.Rustup
+winget install OpenJS.NodeJS.LTS
+```
+*(Nota: Para compilar projetos Rust no Windows, certifique-se de ter o **Microsoft C++ Build Tools** instalado).*
+
+### 2. Clonar e Executar no Windows
+
+```powershell
+git clone https://github.com/in100tiva/KeyHybrid.git
+cd KeyHybrid
+.\run_windows.bat
+```
+
+O script `run_windows.bat` compila automaticamente o `apps\server\keyhybrid-server.exe` (caso ainda não exista), sobe o Gateway silenciosamente em `127.0.0.1:8090` e abre a janela do **KeyHybrid Desktop**.
+
+### 3. Gerar Instalador `.msi` / `.exe` para Windows
+
+```powershell
+# 1. Compilar o servidor Go
+cd apps\server
+go build -o keyhybrid-server.exe main.go
+
+# 2. Compilar o instalador Desktop Tauri
+cd ..\desktop
+npm install
 npm run tauri build
 ```
 
 ---
 
-## 🪟 Execução no Windows
+## 🔌 Como Usar o Gateway Local nos seus Projetos e Agentes
 
-```powershell
-.\run_windows.bat
-```
+Assim que você salvar sua chave (ex: `openrouter`) na interface do **KeyHybrid**, ela gera o token virtual **`kh-openrouter`**.
 
----
+### 1. Configuração em Agentes de IA / SDKs compatíveis com OpenAI
+- **Base URL:** `http://127.0.0.1:8090/v1`
+- **API Key:** `kh-openrouter`
 
-## 🚀 Como usar o Token Virtual nos seus Agentes / Terminal
-
-Com o KeyHybrid aberto (ou o servidor rodando em `127.0.0.1:8090`):
-
+### 2. Chat / Completions (`POST /v1/chat/completions`)
 ```bash
 curl http://127.0.0.1:8090/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer kh-openrouter" \
   -d '{
     "model": "openrouter/auto",
-    "messages": [{"role": "user", "content": "Olá!"}]
+    "messages": [
+      {"role": "user", "content": "Explique a arquitetura Zero-Knowledge do KeyHybrid."}
+    ]
   }'
 ```
+
+### 3. Text-to-Speech / Voz (`POST /v1/audio/speech`)
+```bash
+curl http://127.0.0.1:8090/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer kh-openrouter" \
+  -d '{
+    "model": "elevenlabs/eleven-v4-turbo",
+    "input": "Cofre KeyHybrid operacional, chefe.",
+    "voice": "alice",
+    "response_format": "mp3"
+  }' --output resposta.mp3
+```
+
+### 4. Geração de Vídeo Assíncrona (`POST /v1/videos`)
+```bash
+curl http://127.0.0.1:8090/v1/videos \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer kh-openrouter" \
+  -d '{
+    "model": "heygen/heygen-video-1",
+    "prompt": "Apresentador em estúdio futurista falando sobre cibersegurança."
+  }'
+```
+
+---
+
+## 🎙️ Ativando o Ouvido Local da Assistente Sexta-Feira (Opcional)
+
+Se quiser usar o reconhecimento de voz contínuo pelo microfone físico (Windows ou Linux):
+
+```bash
+pip install faster-whisper sounddevice av numpy
+python apps/server/friday_ear.py
+```
+*(Para controlar uma lâmpada Xiaomi localmente via UDP 54321, crie o arquivo `apps/server/.xiaomi_token` contendo os 32 caracteres hexadecimais do token MiIO da sua lâmpada ou defina a variável de ambiente `XIAOMI_BULB_TOKEN`).*
