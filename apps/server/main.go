@@ -444,6 +444,9 @@ func main() {
 			record.Set("base_url", baseURL)
 			record.Set("auth_header", authHeader)
 			record.Set("auth_prefix", authPrefix)
+			if req.Kind == "service" {
+				req.DefaultModel = "" // modelo só existe para IA
+			}
 			record.Set("default_model", req.DefaultModel)
 			record.Set("active", req.Kind == "ai") // "ativo" é só de IA
 
