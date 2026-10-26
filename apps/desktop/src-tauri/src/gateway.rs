@@ -1,6 +1,7 @@
 use crate::vault::{remove_from_dpapi, store_in_dpapi, SecretHolder};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::time::Duration;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -37,6 +38,19 @@ struct KeyCreatePayload {
     pub kind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
+}
+
+/// Token local do gateway (mesmo arquivo que o `kh run` lê). Rotas de escrita exigem o header.
+fn cli_token() -> Result<String, String> {
+    const AUSENTE: &str = "Token local ausente: abra o gateway do KeyHybrid uma vez";
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| AUSENTE.to_string())?;
+    std::fs::read_to_string(PathBuf::from(home).join(".keyhybrid").join(".cli.token"))
+        .ok()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .ok_or_else(|| AUSENTE.to_string())
 }
 
 #[tauri::command]
@@ -113,6 +127,8 @@ pub async fn save_vault_key(
         return Err("Informe um nome para a chave e o valor da chave secreta.".to_string());
     }
 
+    let token = cli_token()?;
+
     // 1. Gravar no cofre nativo do Windows (DPAPI) com limpeza de RAM via ZeroizeOnDrop
     let _ = store_in_dpapi(&clean_alias, &holder.secret);
 
@@ -134,10 +150,15 @@ pub async fn save_vault_key(
 
     let resp = client
         .post(&url)
+        .header("X-KeyHybrid-Token", token.as_str())
         .json(&payload)
         .send()
         .await
         .map_err(|e| format!("Salva no DPAPI, mas o Gateway Go está offline: {e}"))?;
+
+    if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+        return Err("Token local recusado: reinicie o gateway do KeyHybrid".to_string());
+    }
 
     if !resp.status().is_success() {
         let body = resp.text().await.unwrap_or_default();
@@ -151,6 +172,8 @@ pub async fn save_vault_key(
 
 #[tauri::command]
 pub async fn activate_vault_key(gateway_url: String, id: String) -> Result<(), String> {
+    let token = cli_token()?;
+
     let client = Client::builder()
         .timeout(Duration::from_secs(5))
         .build()
@@ -164,9 +187,14 @@ pub async fn activate_vault_key(gateway_url: String, id: String) -> Result<(), S
 
     let resp = client
         .post(&url)
+        .header("X-KeyHybrid-Token", token.as_str())
         .send()
         .await
         .map_err(|e| format!("Falha ao ativar chave: {e}"))?;
+
+    if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+        return Err("Token local recusado: reinicie o gateway do KeyHybrid".to_string());
+    }
 
     if !resp.status().is_success() {
         return Err(format!("Erro HTTP {}", resp.status()));
@@ -181,6 +209,8 @@ pub async fn delete_vault_key(
     id: String,
     alias: String,
 ) -> Result<(), String> {
+    let token = cli_token()?;
+
     remove_from_dpapi(&alias);
 
     let client = Client::builder()
@@ -196,9 +226,14 @@ pub async fn delete_vault_key(
 
     let resp = client
         .delete(&url)
+        .header("X-KeyHybrid-Token", token.as_str())
         .send()
         .await
         .map_err(|e| format!("Falha ao excluir do Gateway: {e}"))?;
+
+    if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+        return Err("Token local recusado: reinicie o gateway do KeyHybrid".to_string());
+    }
 
     if !resp.status().is_success() {
         return Err(format!("Erro HTTP {}", resp.status()));

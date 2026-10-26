@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -19,6 +20,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pocketbase/pocketbase"
@@ -104,16 +106,44 @@ func getOrCreateMasterKey() []byte {
 	}
 	dir := filepath.Join(home, ".keyhybrid")
 	_ = os.MkdirAll(dir, 0700)
+	_ = os.Chmod(dir, 0700)
 	keyPath := filepath.Join(dir, ".master.key")
+	return loadOrCreateMasterKey(keyPath)
+}
 
-	if data, err := os.ReadFile(keyPath); err == nil && len(data) == 32 {
+// Só gera chave nova se o arquivo NÃO existe: trocar uma chave ilegível
+// deixaria todos os segredos já cifrados irrecuperáveis.
+func loadOrCreateMasterKey(keyPath string) []byte {
+	data, err := os.ReadFile(keyPath)
+	if err == nil {
+		if len(data) != 32 {
+			log.Fatalf("[KeyHybrid] chave mestra %s com %d bytes (esperado 32); não vou sobrescrever. Restaure o backup.", keyPath, len(data))
+		}
 		return data
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		log.Fatal("[KeyHybrid] não consegui ler a chave mestra (não vou sobrescrever): ", err)
 	}
 	newKey := make([]byte, 32)
 	if _, err := io.ReadFull(rand.Reader, newKey); err != nil {
 		log.Fatal("[KeyHybrid] falha ao gerar chave mestra: ", err) // nunca semente fixa
 	}
-	_ = os.WriteFile(keyPath, newKey, 0600)
+	// O_EXCL: se outro processo criou no meio-tempo, usa a dele
+	f, err := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if errors.Is(err, os.ErrExist) {
+		return loadOrCreateMasterKey(keyPath)
+	}
+	if err != nil {
+		log.Fatal("[KeyHybrid] falha ao gravar chave mestra: ", err)
+	}
+	if _, err := f.Write(newKey); err != nil {
+		f.Close()
+		os.Remove(keyPath)
+		log.Fatal("[KeyHybrid] falha ao gravar chave mestra: ", err)
+	}
+	if err := f.Close(); err != nil {
+		log.Fatal("[KeyHybrid] falha ao gravar chave mestra: ", err)
+	}
 	return newKey
 }
 
@@ -202,6 +232,16 @@ func loadLocalXiaomiToken() string {
 	return ""
 }
 
+// A API da Anthropic usa o id puro ("claude-…"), sem o prefixo de roteamento da OpenRouter
+func anthropicModel(v any) string {
+	m, _ := v.(string)
+	m = strings.TrimPrefix(strings.TrimSpace(m), "anthropic/")
+	if !strings.HasPrefix(m, "claude-") {
+		return "claude-haiku-5-5"
+	}
+	return m
+}
+
 func resolveProviderURL(provider string, customURL string) string {
 	if customURL != "" {
 		if !strings.HasSuffix(customURL, "/chat/completions") {
@@ -213,7 +253,8 @@ func resolveProviderURL(provider string, customURL string) string {
 	case "gemini":
 		return "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 	case "anthropic":
-		return "https://openrouter.ai/api/v1/chat/completions"
+		// camada compatível com OpenAI da própria Anthropic; nunca mandar sk-ant- a terceiros
+		return "https://api.anthropic.com/v1/chat/completions"
 	default:
 		return "https://openrouter.ai/api/v1/chat/completions"
 	}
@@ -224,6 +265,8 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "run" {
 		os.Exit(runCmd(os.Args[2:]))
 	}
+
+	getOrCreateMasterKey() // chave ilegível para o boot, não uma requisição no meio
 
 	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: dataDir()})
 
@@ -389,7 +432,11 @@ func main() {
 		})
 
 		// Cadastrar ou atualizar uma chave pelo Alias: "ai" (padrão) ou "service" (qualquer API via /proxy e kh run)
+		// Escrita no cofre exige o token local: sem ele, qualquer processo da máquina apagava ou trocava chaves
 		e.Router.POST("/api/keyhybrid/keys", func(evt *core.RequestEvent) error {
+			if !tokenValid(evt.Request, cliToken) {
+				return evt.UnauthorizedError("Token local inválido", nil)
+			}
 			var req KeyCreateRequest
 			if err := evt.BindBody(&req); err != nil {
 				return evt.BadRequestError("Dados inválidos", err)
@@ -483,6 +530,9 @@ func main() {
 
 		// Ativar uma chave específica como padrão (só IA)
 		e.Router.POST("/api/keyhybrid/keys/{id}/activate", func(evt *core.RequestEvent) error {
+			if !tokenValid(evt.Request, cliToken) {
+				return evt.UnauthorizedError("Token local inválido", nil)
+			}
 			id := evt.Request.PathValue("id")
 			target, err := app.FindRecordById("vault_keys", id)
 			if err != nil {
@@ -503,6 +553,9 @@ func main() {
 
 		// Remover uma chave do cofre
 		e.Router.DELETE("/api/keyhybrid/keys/{id}", func(evt *core.RequestEvent) error {
+			if !tokenValid(evt.Request, cliToken) {
+				return evt.UnauthorizedError("Token local inválido", nil)
+			}
 			id := evt.Request.PathValue("id")
 			target, err := app.FindRecordById("vault_keys", id)
 			if err != nil {
@@ -686,6 +739,9 @@ func main() {
 			}
 
 			targetURL := resolveProviderURL(provider, baseURL)
+			if strings.EqualFold(provider, "anthropic") && baseURL == "" {
+				payload["model"] = anthropicModel(payload["model"])
+			}
 			isStream, _ := payload["stream"].(bool)
 
 			doUpstream := func(bodyMap map[string]any) (*http.Response, error) {
@@ -1127,9 +1183,13 @@ func main() {
 
 		// Sintetiza a voz oficial da Assistente Sexta-Feira (F.R.I.D.A.Y. -> elevenlabs/eleven-v4-turbo, voice: alice) com cache em memória
 		ttsCache := map[string]string{}
+		var ttsMu sync.Mutex // requisições concorrentes: mapa sem trava derruba o processo
 		synthesizeFridayVoice := func(ctx *core.RequestEvent, secretKey string, text string) string {
 			cacheKey := strings.TrimSpace(text)
-			if cached, ok := ttsCache[cacheKey]; ok && cached != "" {
+			ttsMu.Lock()
+			cached := ttsCache[cacheKey]
+			ttsMu.Unlock()
+			if cached != "" {
 				return cached
 			}
 			ttsBody, _ := json.Marshal(map[string]any{
@@ -1166,7 +1226,9 @@ func main() {
 				return ""
 			}
 			b64 := base64.StdEncoding.EncodeToString(audioBytes)
+			ttsMu.Lock()
 			ttsCache[cacheKey] = b64
+			ttsMu.Unlock()
 			return b64
 		}
 
