@@ -6,7 +6,7 @@ ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # 1. Garantir que o Gateway Go esteja compilado e rodando em 127.0.0.1:8090
 if [ ! -f "$ROOT_DIR/apps/server/keyhybrid-server" ]; then
   echo "[KeyHybrid] Compilando servidor Go..."
-  (cd "$ROOT_DIR/apps/server" && go build -o keyhybrid-server main.go)
+  (cd "$ROOT_DIR/apps/server" && go build -o keyhybrid-server .)
 fi
 
 if ! nc -z 127.0.0.1 8090 >/dev/null 2>&1; then

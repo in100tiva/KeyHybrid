@@ -28,13 +28,13 @@ fi
 # 2. Compilar o Servidor Gateway em Go (PocketBase + AES-256-GCM Vault)
 echo "[2/4] Compilando o Gateway Local em Go (apps/server/keyhybrid-server)..."
 cd "$(dirname "$0")/apps/server"
-go mod tidy
-go build -o keyhybrid-server main.go
+go build -o keyhybrid-server .
 chmod +x keyhybrid-server
 
 # Copiar também para ~/.keyhybrid/bin para auto-start pelo Tauri
 mkdir -p "$HOME/.keyhybrid/bin"
 cp -f keyhybrid-server "$HOME/.keyhybrid/bin/keyhybrid-server"
+mkdir -p "$HOME/.local/bin" && ln -sf "$HOME/.keyhybrid/bin/keyhybrid-server" "$HOME/.local/bin/kh"
 
 # 3. Instalar dependências do Frontend Desktop (Svelte 5 + Tauri v2)
 echo "[3/4] Instalando dependências do Desktop App (apps/desktop)..."
