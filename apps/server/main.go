@@ -74,8 +74,11 @@ func onlyAI(recs []*core.Record) []*core.Record {
 	return out
 }
 
-func keyView(rec *core.Record) KeySafeView {
-	masked := maskSecret(decryptSecretAtRest(rec.GetString("secret_key")))
+func keyView(rec *core.Record, authorized bool) KeySafeView {
+	masked := "••••••••"
+	if authorized && rec.GetString("secret_key") != "" {
+		masked = maskSecret(decryptSecretAtRest(rec.GetString("secret_key")))
+	}
 	v := KeySafeView{
 		Id:         rec.Id,
 		Alias:      rec.GetString("alias"),
@@ -224,35 +227,46 @@ func encryptSecretAtRest(plain string) (string, error) {
 	return "enc:v1:" + base64.StdEncoding.EncodeToString(sealed), nil
 }
 
-func decryptSecretAtRest(stored string) string {
+func wipeBytes(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
+}
+
+func decryptSecretAtRestBytes(stored string) ([]byte, error) {
 	stored = strings.TrimSpace(stored)
 	if !strings.HasPrefix(stored, "enc:v1:") {
-		return stored
+		return []byte(stored), nil
 	}
 	raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(stored, "enc:v1:"))
 	if err != nil {
-		return ""
+		return nil, err
 	}
 	key := getOrCreateMasterKey()
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return ""
+		return nil, err
 	}
 	gcm, err := cipher.NewGCM(block)
 	if err != nil || len(raw) < gcm.NonceSize() {
-		return ""
+		return nil, errors.New("formato de cifra inválido")
 	}
 	nonce := raw[:gcm.NonceSize()]
 	ciphertext := raw[gcm.NonceSize():]
 	plain, err := gcm.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
+		return nil, err
+	}
+	return plain, nil
+}
+
+func decryptSecretAtRest(stored string) string {
+	b, err := decryptSecretAtRestBytes(stored)
+	if err != nil {
 		return ""
 	}
-	res := string(plain)
-	for i := range plain {
-		plain[i] = 0
-	}
-	return res
+	defer wipeBytes(b)
+	return string(b)
 }
 
 func loadLocalXiaomiToken() string {
@@ -330,9 +344,6 @@ func main() {
 				Hidden:   true, // Jamais exposto na API padrão
 			})
 			collection.Fields.Add(&core.TextField{
-				Name: "masked_key",
-			})
-			collection.Fields.Add(&core.TextField{
 				Name: "base_url",
 			})
 			collection.Fields.Add(&core.TextField{
@@ -359,7 +370,11 @@ func main() {
 		} else {
 			col, err := app.FindCollectionByNameOrId("vault_keys")
 			if err == nil {
-				for _, name := range []string{"masked_key", "kind", "auth_header", "auth_prefix"} {
+				if col.Fields.GetByName("masked_key") != nil {
+					col.Fields.RemoveByName("masked_key")
+					_ = app.Save(col)
+				}
+				for _, name := range []string{"kind", "auth_header", "auth_prefix"} {
 					if col.Fields.GetByName(name) == nil {
 						col.Fields.Add(&core.TextField{Name: name})
 						_ = app.Save(col)
@@ -378,7 +393,6 @@ func main() {
 						log.Fatalf("[KeyHybrid] erro ao cifrar chave na migração: %v", err)
 					}
 					r.Set("secret_key", enc)
-					r.Set("masked_key", "")
 					if err := app.Save(r); err != nil {
 						log.Fatalf("[KeyHybrid] erro ao salvar chave na migração: %v", err)
 					}
@@ -391,6 +405,11 @@ func main() {
 
 	// 2. Rotas do Gateway e Gerenciamento Seguro de Chaves
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
+		if e.Server != nil {
+			e.Server.ReadHeaderTimeout = 5 * time.Second
+			e.Server.ReadTimeout = 30 * time.Second
+			e.Server.IdleTimeout = 60 * time.Second
+		}
 		cliToken := loadOrCreateCLIToken()
 
 		// Configurar CORS estrito do PocketBase (anti CSRF / Origin evil)
@@ -479,6 +498,7 @@ func main() {
 				return records[i].GetString("alias") < records[j].GetString("alias")
 			})
 
+			authorized := tokenValid(evt.Request, cliToken)
 			result := make([]KeySafeView, 0, len(records))
 			for _, rec := range records {
 				if !isServiceKey(rec) {
@@ -488,7 +508,7 @@ func main() {
 						_ = app.Save(rec)
 					}
 				}
-				result = append(result, keyView(rec))
+				result = append(result, keyView(rec, authorized))
 			}
 
 			return evt.JSON(http.StatusOK, result)
@@ -580,7 +600,6 @@ func main() {
 			record.Set("provider", req.Provider)
 			record.Set("kind", req.Kind)
 			record.Set("secret_key", encSecret)
-			record.Set("masked_key", "")
 			record.Set("base_url", baseURL)
 			record.Set("auth_header", authHeader)
 			record.Set("auth_prefix", authPrefix)
@@ -594,7 +613,7 @@ func main() {
 				return evt.InternalServerError("Erro ao salvar chave no cofre", err)
 			}
 
-			return evt.JSON(http.StatusOK, keyView(record))
+			return evt.JSON(http.StatusOK, keyView(record, true))
 		})
 
 		// Ativar uma chave específica como padrão (só IA)
@@ -1342,7 +1361,7 @@ func main() {
 		e.Router.GET("/api/keyhybrid/friday/state", func(evt *core.RequestEvent) error {
 			secretKey, _ := resolveVaultSecret(evt)
 			fridayMu.Lock()
-			resEnabled := fridayEnabledState && secretKey != ""
+			resEnabled := fridayEnabledState && (secretKey != "" || tokenValid(evt.Request, cliToken))
 			resMuted := time.Now().Before(fridayMuteUntil)
 			resEvt := lastFridayEvent
 			fridayMu.Unlock()
@@ -1426,10 +1445,11 @@ func main() {
 			if req.Greeting {
 				fridayMu.Lock()
 				fridayEnabledState = true
-				greetText := "Sexta-Feira online, chefe. Estou na escuta. Quando quiser, basta me chamar pelo nome."
-				audioB64 := synthesizeFridayVoice(evt, secretKey, greetText)
 				fridayMuteUntil = time.Now().Add(5 * time.Second)
 				fridayMu.Unlock()
+
+				greetText := "Sexta-Feira online, chefe. Estou na escuta. Quando quiser, basta me chamar pelo nome."
+				audioB64 := synthesizeFridayVoice(evt, secretKey, greetText)
 				return evt.JSON(http.StatusOK, map[string]any{
 					"reply":        greetText,
 					"audio_base64": audioB64,
