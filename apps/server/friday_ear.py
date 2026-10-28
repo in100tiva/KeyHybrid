@@ -51,11 +51,13 @@ def check_friday_enabled() -> bool:
         tok = load_cli_token()
         if tok:
             req.add_header("X-KeyHybrid-Token", tok)
+            req.add_header("Authorization", f"Bearer {tok}")
         with urllib.request.urlopen(req, timeout=1.0) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-            return bool(data.get("enabled", True))
+            return bool(data.get("enabled", False))
     except Exception:
-        return True
+        # N5: falha fechado (desligado) em caso de 401, 403 ou timeout
+        return False
 
 def is_friday_command(text: str) -> bool:
     norm = strip_accents(text).strip().lower()

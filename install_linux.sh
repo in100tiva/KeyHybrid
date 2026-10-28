@@ -30,7 +30,7 @@ fi
 # 2. Compilar o Servidor Gateway em Go (PocketBase + AES-256-GCM Vault)
 echo "[2/5] Compilando o Gateway Local em Go (apps/server/keyhybrid-server)..."
 cd "$ROOT_DIR/apps/server"
-go build -o keyhybrid-server .
+go build -trimpath -buildvcs=false -ldflags="-s -w" -o keyhybrid-server .
 chmod +x keyhybrid-server
 
 # O cofre fica em ~/.keyhybrid/pb_data (não ao lado do binário)

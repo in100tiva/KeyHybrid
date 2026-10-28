@@ -22,6 +22,7 @@ sha2 = "0.10"
 getrandom = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 tokio = { version = "1", features = ["full"] }
+argon2 = { version = "0.6.0", default-features = false, features = ["alloc", "password-hash"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }

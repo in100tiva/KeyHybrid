@@ -19,6 +19,7 @@ const khDefaultGateway = "http://127.0.0.1:8090"
 // kh run -e NOME=alias [-e ...] -- comando: entrega segredos no ambiente do filho, sem imprimi-los
 func runCmd(args []string) int {
 	var pairs []string
+	var fdAliases []string
 	sep := false
 	i := 0
 	for ; i < len(args) && !sep; i++ {
@@ -33,6 +34,14 @@ func runCmd(args []string) int {
 			pairs = append(pairs, args[i])
 		case strings.HasPrefix(a, "--env="):
 			pairs = append(pairs, strings.TrimPrefix(a, "--env="))
+		case a == "--fd":
+			if i+1 >= len(args) {
+				return usoRun("falta valor para " + a)
+			}
+			i++
+			fdAliases = append(fdAliases, args[i])
+		case strings.HasPrefix(a, "--fd="):
+			fdAliases = append(fdAliases, strings.TrimPrefix(a, "--fd="))
 		default:
 			return usoRun("opção desconhecida: " + a)
 		}
@@ -51,6 +60,19 @@ func runCmd(args []string) int {
 			return usoRun("use NOME=alias (NOME: letras, números e _; alias: letras, números, . _ -)")
 		}
 		envNames[name] = alias
+		if !seen[alias] {
+			seen[alias] = true
+			aliases = append(aliases, alias)
+		}
+	}
+	for _, fda := range fdAliases {
+		alias := fda
+		if _, a, ok := strings.Cut(fda, "="); ok {
+			alias = a
+		}
+		if !aliasRe.MatchString(alias) {
+			return usoRun("alias de fd inválido: " + alias)
+		}
 		if !seen[alias] {
 			seen[alias] = true
 			aliases = append(aliases, alias)
@@ -87,8 +109,31 @@ func runCmd(args []string) int {
 		}
 	}
 
+	var extraFiles []*os.File
+	for _, fda := range fdAliases {
+		alias := fda
+		if _, a, ok := strings.Cut(fda, "="); ok {
+			alias = a
+		}
+		val := secrets[alias]
+		if len(val) >= 8 {
+			masks = append(masks, []byte(val))
+		}
+		pr, pw, err := os.Pipe()
+		if err == nil {
+			go func(w *os.File, secret string) {
+				_, _ = w.WriteString(secret)
+				_ = w.Close()
+			}(pw, val)
+			extraFiles = append(extraFiles, pr)
+		}
+	}
+
 	cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
 	cmd.Env = env
+	if len(extraFiles) > 0 {
+		cmd.ExtraFiles = extraFiles
+	}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = outWriter(os.Stdout, masks)
 	cmd.Stderr = outWriter(os.Stderr, masks)
