@@ -1,4 +1,4 @@
-use crate::vault::{remove_from_dpapi, store_in_dpapi, SecretHolder};
+use crate::vault::{has_vault_pin, is_unlocked, SecretHolder};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -127,12 +127,13 @@ pub async fn save_vault_key(
         return Err("Informe um nome para a chave e o valor da chave secreta.".to_string());
     }
 
+    if has_vault_pin().unwrap_or(false) && !is_unlocked() {
+        return Err("Cofre bloqueado. Digite seu PIN de 6 dígitos para autorizar salvar chaves.".to_string());
+    }
+
     let token = cli_token()?;
 
-    // 1. Gravar no cofre nativo do Windows (DPAPI) com limpeza de RAM via ZeroizeOnDrop
-    let _ = store_in_dpapi(&clean_alias, &holder.secret);
-
-    // 2. Registrar no Gateway Go local para disponibilizar em http://127.0.0.1:8090/v1
+    // 1. Registrar no Gateway Go local para disponibilizar em http://127.0.0.1:8090/v1
     let client = Client::builder()
         .timeout(Duration::from_secs(5))
         .build()
@@ -154,7 +155,7 @@ pub async fn save_vault_key(
         .json(&payload)
         .send()
         .await
-        .map_err(|e| format!("Salva no DPAPI, mas o Gateway Go está offline: {e}"))?;
+        .map_err(|e| format!("O Gateway Go está offline ou inacessível: {e}"))?;
 
     if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
         return Err("Token local recusado: reinicie o gateway do KeyHybrid".to_string());
@@ -207,11 +208,13 @@ pub async fn activate_vault_key(gateway_url: String, id: String) -> Result<(), S
 pub async fn delete_vault_key(
     gateway_url: String,
     id: String,
-    alias: String,
+    _alias: String,
 ) -> Result<(), String> {
-    let token = cli_token()?;
+    if has_vault_pin().unwrap_or(false) && !is_unlocked() {
+        return Err("Cofre bloqueado. Digite seu PIN de 6 dígitos para autorizar excluir chaves.".to_string());
+    }
 
-    remove_from_dpapi(&alias);
+    let token = cli_token()?;
 
     let client = Client::builder()
         .timeout(Duration::from_secs(5))

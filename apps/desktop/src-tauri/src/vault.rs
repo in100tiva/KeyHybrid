@@ -2,7 +2,6 @@ use keyring::Entry;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use zeroize::{Zeroize, ZeroizeOnDrop};
@@ -24,8 +23,31 @@ static TENTATIVAS: Mutex<Tentativas> = Mutex::new(Tentativas {
     falhas: 0,
     bloqueado_ate: None,
 });
-// Cofre destravado nesta sessão (PIN conferido ou definido)
-static UNLOCKED: AtomicBool = AtomicBool::new(false);
+
+struct LockState {
+    unlocked_until: Option<Instant>,
+}
+static LOCK_STATE: Mutex<LockState> = Mutex::new(LockState {
+    unlocked_until: None,
+});
+
+pub fn is_unlocked() -> bool {
+    let state = LOCK_STATE.lock().unwrap_or_else(|e| e.into_inner());
+    match state.unlocked_until {
+        Some(until) => Instant::now() < until,
+        None => false,
+    }
+}
+
+pub fn touch_unlock() {
+    let mut state = LOCK_STATE.lock().unwrap_or_else(|e| e.into_inner());
+    state.unlocked_until = Some(Instant::now() + Duration::from_secs(15 * 60));
+}
+
+pub fn relock() {
+    let mut state = LOCK_STATE.lock().unwrap_or_else(|e| e.into_inner());
+    state.unlocked_until = None;
+}
 
 fn fallback_pin_path() -> PathBuf {
     let home = std::env::var("HOME")
@@ -36,13 +58,13 @@ fn fallback_pin_path() -> PathBuf {
     dir.join(".pin.vault")
 }
 
-pub fn store_in_dpapi(alias: &str, secret: &str) -> Result<(), String> {
-    if let Ok(entry) = Entry::new(SERVICE_NAME, alias) {
-        let _ = entry.set_password(secret);
-    }
+#[allow(dead_code)]
+pub fn store_in_dpapi(_alias: &str, _secret: &str) -> Result<(), String> {
+    // KH-07: segredos individuais não são gravados em claro nas credenciais do SO
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn remove_from_dpapi(alias: &str) {
     if let Ok(entry) = Entry::new(SERVICE_NAME, alias) {
         let _ = entry.delete_credential();
@@ -124,16 +146,18 @@ fn stored_pin() -> Option<String> {
         .map(|s| s.trim().to_string())
 }
 
-fn persist_pin(stored: &str) {
+fn persist_pin(stored: &str) -> Result<(), String> {
     if let Ok(entry) = Entry::new(SERVICE_NAME, PIN_ENTRY_KEY) {
         let _ = entry.set_password(stored);
     }
-    let _ = fs::write(fallback_pin_path(), stored);
+    fs::write(fallback_pin_path(), stored)
+        .map_err(|e| format!("Falha ao gravar arquivo do PIN: {e}"))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let _ = fs::set_permissions(fallback_pin_path(), fs::Permissions::from_mode(0o600));
     }
+    Ok(())
 }
 
 /// Atraso após a 5ª falha seguida: 30 s, dobrando, teto 15 min
@@ -169,20 +193,27 @@ pub fn has_vault_pin() -> Result<bool, String> {
 
 /// Define um novo PIN de 6 dígitos (Windows DPAPI / Linux Secret Service + Fallback local)
 #[tauri::command]
-pub fn set_vault_pin(pin: String) -> Result<(), String> {
+pub fn set_vault_pin(pin: String, current_pin: Option<String>) -> Result<(), String> {
     let holder = SecretHolder {
         secret: pin.trim().to_string(),
     };
     if holder.secret.len() != 6 || !holder.secret.chars().all(|c| c.is_ascii_digit()) {
         return Err("O PIN deve conter exatamente 6 dígitos numéricos".to_string());
     }
-    // Trocar um PIN existente exige o cofre destravado, senão qualquer chamada redefinia o PIN
-    if has_vault_pin()? && !UNLOCKED.load(Ordering::SeqCst) {
-        return Err("Destrave o cofre antes de trocar o PIN.".to_string());
+    if has_vault_pin()? {
+        if !is_unlocked() {
+            return Err("Destrave o cofre antes de trocar o PIN.".to_string());
+        }
+        if let Some(cur) = current_pin {
+            let stored = stored_pin().ok_or_else(|| "Erro ao ler PIN configurado.".to_string())?;
+            if check_pin(&stored, cur.trim()).map(|(ok, _)| ok) != Some(true) {
+                return Err("PIN atual incorreto.".to_string());
+            }
+        }
     }
 
-    persist_pin(&make_stored(&holder.secret)?);
-    UNLOCKED.store(true, Ordering::SeqCst);
+    persist_pin(&make_stored(&holder.secret)?)?;
+    touch_unlock();
     Ok(())
 }
 
@@ -193,7 +224,7 @@ pub fn verify_vault_pin(pin: String) -> Result<bool, String> {
         return Err(format!("Muitas tentativas. Aguarde {segundos} s."));
     }
     let Some(stored) = stored_pin().map(|secret| SecretHolder { secret }) else {
-        return Ok(true);
+        return Err("Nenhum PIN configurado no cofre.".to_string());
     };
     let input_holder = SecretHolder {
         secret: pin.trim().to_string(),
@@ -203,11 +234,11 @@ pub fn verify_vault_pin(pin: String) -> Result<bool, String> {
             if precisa_migrar {
                 // Troca o PIN em claro pelo hash; falha aqui não bloqueia o acerto
                 if let Ok(novo) = make_stored(&input_holder.secret) {
-                    persist_pin(&novo);
+                    let _ = persist_pin(&novo);
                 }
             }
             registrar_resultado(true);
-            UNLOCKED.store(true, Ordering::SeqCst);
+            touch_unlock();
             Ok(true)
         }
         _ => {
@@ -219,14 +250,21 @@ pub fn verify_vault_pin(pin: String) -> Result<bool, String> {
 
 /// Remove o PIN de bloqueio do cofre (só com o cofre destravado nesta sessão)
 #[tauri::command]
-pub fn clear_vault_pin() -> Result<(), String> {
-    if !UNLOCKED.load(Ordering::SeqCst) {
+pub fn clear_vault_pin(current_pin: Option<String>) -> Result<(), String> {
+    if !is_unlocked() {
         return Err("Destrave o cofre antes de remover o PIN.".to_string());
+    }
+    if let Some(cur) = current_pin {
+        let stored = stored_pin().ok_or_else(|| "Nenhum PIN configurado.".to_string())?;
+        if check_pin(&stored, cur.trim()).map(|(ok, _)| ok) != Some(true) {
+            return Err("PIN atual incorreto.".to_string());
+        }
     }
     if let Ok(entry) = Entry::new(SERVICE_NAME, PIN_ENTRY_KEY) {
         let _ = entry.delete_credential();
     }
     let _ = fs::remove_file(fallback_pin_path());
+    relock();
     Ok(())
 }
 
@@ -265,5 +303,15 @@ mod tests {
         assert_eq!(backoff_secs(6), 60);
         assert_eq!(backoff_secs(9), 480);
         assert_eq!(backoff_secs(12), 900);
+    }
+
+    #[test]
+    fn kh06_lock_estado_e_expiracao() {
+        relock();
+        assert!(!is_unlocked());
+        touch_unlock();
+        assert!(is_unlocked());
+        relock();
+        assert!(!is_unlocked());
     }
 }

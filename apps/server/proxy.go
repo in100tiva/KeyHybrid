@@ -17,18 +17,18 @@ var hopByHopHeaders = map[string]bool{
 // Cabeçalhos do cliente que nunca seguem para a API externa
 var stripRequestHeaders = map[string]bool{
 	"authorization": true, "cookie": true, "host": true, "origin": true,
-	"referer": true, "x-keyhybrid-token": true,
+	"referer": true, "x-keyhybrid-token": true, "content-length": true,
 }
 
 // Monta o destino; recusa caminho que saia do prefixo do base_url (o ServeMux já limpa "..", isto é a segunda trava)
 func buildProxyTarget(base, rest, rawQuery string) (string, error) {
 	bu, err := url.Parse(base)
-	if err != nil || bu.Scheme != "https" || bu.Hostname() == "" || bu.User != nil {
+	if err != nil || bu.Scheme != "https" || bu.Hostname() == "" || bu.User != nil || bu.RawQuery != "" || bu.Fragment != "" {
 		return "", errors.New("base_url inválida")
 	}
 	low := strings.ToLower(rest)
 	if strings.HasPrefix(rest, "/") || strings.Contains(rest, "//") || strings.ContainsAny(rest, "@\\") ||
-		strings.Contains(low, "%2f") || strings.Contains(low, "%2e") {
+		strings.Contains(low, "%2f") || strings.Contains(low, "%2e") || strings.Contains(low, "%5c") {
 		return "", errors.New("caminho fora do destino")
 	}
 	for _, seg := range strings.Split(rest, "/") {
@@ -41,7 +41,7 @@ func buildProxyTarget(base, rest, rawQuery string) (string, error) {
 		target += "?" + rawQuery
 	}
 	tu, err := url.Parse(target)
-	if err != nil || tu.Scheme != bu.Scheme || tu.Host != bu.Host || !strings.HasPrefix(tu.EscapedPath(), bu.EscapedPath()) {
+	if err != nil || tu.Scheme != bu.Scheme || tu.Host != bu.Host || tu.Fragment != "" || !strings.HasPrefix(tu.EscapedPath(), bu.EscapedPath()) {
 		return "", errors.New("caminho fora do destino")
 	}
 	return target, nil
@@ -49,6 +49,10 @@ func buildProxyTarget(base, rest, rawQuery string) (string, error) {
 
 // Repassa a requisição injetando o segredo; não segue redirect (cabeçalho como apikey vazaria para outro host)
 func forwardToService(w http.ResponseWriter, r *http.Request, target, authName, authValue string) int {
+	if !isAllowedAuthHeader(authName) {
+		http.Error(w, "cabeçalho de autenticação proibido", http.StatusBadRequest)
+		return http.StatusBadRequest
+	}
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, target, r.Body)
 	if err != nil {
 		http.Error(w, "destino inválido", http.StatusBadRequest)

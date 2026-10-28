@@ -7,6 +7,9 @@ pb_data/
 .xiaomi_token
 **/.xiaomi_token
 .master.key
+.master.key.wrapped
+__pycache__/
+*.pyc
 .pin.vault
 .env
 .env.*
