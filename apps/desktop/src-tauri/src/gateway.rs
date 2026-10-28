@@ -1,4 +1,4 @@
-use crate::vault::{has_vault_pin, is_unlocked, SecretHolder};
+use crate::vault::{assert_local_origin, has_vault_pin, is_unlocked, SecretHolder};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -110,6 +110,7 @@ pub async fn list_vault_keys(gateway_url: String) -> Result<Vec<KeySafeView>, St
 
 #[tauri::command]
 pub async fn save_vault_key(
+    window: tauri::WebviewWindow,
     gateway_url: String,
     alias: String,
     provider: String,
@@ -118,6 +119,7 @@ pub async fn save_vault_key(
     kind: Option<String>,
     base_url: Option<String>,
 ) -> Result<KeySafeView, String> {
+    assert_local_origin(&window)?;
     let clean_alias = alias.trim().to_string();
     let holder = SecretHolder {
         secret: secret_key.trim().to_string(),
@@ -172,7 +174,8 @@ pub async fn save_vault_key(
 }
 
 #[tauri::command]
-pub async fn activate_vault_key(gateway_url: String, id: String) -> Result<(), String> {
+pub async fn activate_vault_key(window: tauri::WebviewWindow, gateway_url: String, id: String) -> Result<(), String> {
+    assert_local_origin(&window)?;
     let token = cli_token()?;
 
     let client = Client::builder()
@@ -206,10 +209,12 @@ pub async fn activate_vault_key(gateway_url: String, id: String) -> Result<(), S
 
 #[tauri::command]
 pub async fn delete_vault_key(
+    window: tauri::WebviewWindow,
     gateway_url: String,
     id: String,
     _alias: String,
 ) -> Result<(), String> {
+    assert_local_origin(&window)?;
     if has_vault_pin().unwrap_or(false) && !is_unlocked() {
         return Err("Cofre bloqueado. Digite seu PIN de 6 dígitos para autorizar excluir chaves.".to_string());
     }

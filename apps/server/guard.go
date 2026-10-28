@@ -82,14 +82,14 @@ func cliTokenPath() string {
 	return filepath.Join(homeDir(), ".keyhybrid", ".cli.token")
 }
 
-// Token local de 32 bytes em hex: quem não lê ~/.keyhybrid não usa o cofre por HTTP
+// Token local de 32 bytes em hex: rotacionado a cada boot do gateway (KH-12).
+// Quem não lê ~/.keyhybrid não usa o cofre por HTTP.
 func loadOrCreateCLIToken() string {
 	path := cliTokenPath()
 	_ = os.MkdirAll(filepath.Dir(path), 0700)
-	if data, err := os.ReadFile(path); err == nil {
-		if tok := strings.TrimSpace(string(data)); len(tok) == 64 {
-			return tok
-		}
+	if force := os.Getenv("KEYHYBRID_FORCE_TOKEN"); len(force) == 64 {
+		_ = os.WriteFile(path, []byte(force), 0600)
+		return force
 	}
 	raw := make([]byte, 32)
 	if _, err := io.ReadFull(rand.Reader, raw); err != nil {
@@ -103,8 +103,21 @@ func loadOrCreateCLIToken() string {
 }
 
 func tokenValid(r *http.Request, token string) bool {
+	if token == "" {
+		return false
+	}
 	got := r.Header.Get("X-KeyHybrid-Token")
-	return token != "" && subtle.ConstantTimeCompare([]byte(got), []byte(token)) == 1
+	if subtle.ConstantTimeCompare([]byte(got), []byte(token)) == 1 {
+		return true
+	}
+	auth := strings.TrimSpace(r.Header.Get("Authorization"))
+	if strings.HasPrefix(strings.ToLower(auth), "bearer ") {
+		bearerTok := strings.TrimSpace(auth[7:])
+		if subtle.ConstantTimeCompare([]byte(bearerTok), []byte(token)) == 1 {
+			return true
+		}
+	}
+	return false
 }
 
 // Base de chave de serviço: só https, sem usuário, query nem fragmento; barra final removida
