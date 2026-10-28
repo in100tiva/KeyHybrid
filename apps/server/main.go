@@ -16,15 +16,23 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/pocketbase/pocketbase"
+	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
+)
+
+var (
+	jobIdRe  = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+	fridayMu sync.Mutex
 )
 
 type KeyCreateRequest struct {
@@ -67,10 +75,7 @@ func onlyAI(recs []*core.Record) []*core.Record {
 }
 
 func keyView(rec *core.Record) KeySafeView {
-	masked := rec.GetString("masked_key")
-	if masked == "" {
-		masked = maskSecret(decryptSecretAtRest(rec.GetString("secret_key")))
-	}
+	masked := maskSecret(decryptSecretAtRest(rec.GetString("secret_key")))
 	v := KeySafeView{
 		Id:         rec.Id,
 		Alias:      rec.GetString("alias"),
@@ -95,54 +100,83 @@ func maskSecret(secret string) string {
 	if len(s) <= 8 {
 		return "••••••••"
 	}
-	return s[:6] + "••••" + s[len(s)-4:]
+	if len(s) <= 12 {
+		return "••••••••"
+	}
+	return "••••••••" + s[len(s)-4:]
 }
 
 // Chave mestra local de 256 bits para criptografia AES-256-GCM em repouso no SQLite (Windows & Linux)
 func getOrCreateMasterKey() []byte {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "."
-	}
-	dir := filepath.Join(home, ".keyhybrid")
+	dir := filepath.Join(homeDir(), ".keyhybrid")
 	_ = os.MkdirAll(dir, 0700)
 	_ = os.Chmod(dir, 0700)
-	keyPath := filepath.Join(dir, ".master.key")
-	return loadOrCreateMasterKey(keyPath)
+	return loadOrCreateMasterKey(dir)
 }
 
 // Só gera chave nova se o arquivo NÃO existe: trocar uma chave ilegível
 // deixaria todos os segredos já cifrados irrecuperáveis.
-func loadOrCreateMasterKey(keyPath string) []byte {
-	data, err := os.ReadFile(keyPath)
-	if err == nil {
-		if len(data) != 32 {
-			log.Fatalf("[KeyHybrid] chave mestra %s com %d bytes (esperado 32); não vou sobrescrever. Restaure o backup.", keyPath, len(data))
+// A chave é selada pelo mecanismo do SO (DPAPI no Windows).
+func loadOrCreateMasterKey(pathOrDir string) []byte {
+	dir := pathOrDir
+	if fi, err := os.Stat(pathOrDir); err == nil && !fi.IsDir() {
+		dir = filepath.Dir(pathOrDir)
+	} else if strings.HasSuffix(pathOrDir, ".key") || strings.HasSuffix(pathOrDir, ".wrapped") {
+		dir = filepath.Dir(pathOrDir)
+	}
+
+	wrappedPath := filepath.Join(dir, ".master.key.wrapped")
+	legacyPath := filepath.Join(dir, ".master.key")
+
+	// 1. Tentar ler chave selada pelo SO
+	if wrappedData, err := os.ReadFile(wrappedPath); err == nil && len(wrappedData) > 0 {
+		unwrapped, uerr := osUnwrapKey(wrappedData)
+		if uerr == nil && len(unwrapped) == 32 {
+			_ = os.Remove(legacyPath)
+			return unwrapped
 		}
-		return data
+		log.Fatalf("[KeyHybrid] falha ao decifrar chave mestra selada pelo SO: %v", uerr)
 	}
-	if !errors.Is(err, os.ErrNotExist) {
-		log.Fatal("[KeyHybrid] não consegui ler a chave mestra (não vou sobrescrever): ", err)
+
+	// 2. Migração: se existir .master.key legada em claro, selar no SO e remover o arquivo em claro
+	if legacyData, err := os.ReadFile(legacyPath); err == nil {
+		if len(legacyData) != 32 {
+			log.Fatalf("[KeyHybrid] chave mestra legada com tamanho inválido (%d bytes)", len(legacyData))
+		}
+		wrapped, werr := osWrapKey(legacyData)
+		if werr != nil {
+			log.Fatalf("[KeyHybrid] falha ao selar chave mestra legada no SO: %v", werr)
+		}
+		if err := os.WriteFile(wrappedPath, wrapped, 0600); err != nil {
+			log.Fatalf("[KeyHybrid] falha ao salvar chave mestra selada: %v", err)
+		}
+		_ = os.Remove(legacyPath)
+		return legacyData
 	}
+
+	// 3. Gerar nova chave e selar
 	newKey := make([]byte, 32)
 	if _, err := io.ReadFull(rand.Reader, newKey); err != nil {
-		log.Fatal("[KeyHybrid] falha ao gerar chave mestra: ", err) // nunca semente fixa
+		log.Fatal("[KeyHybrid] falha ao gerar chave mestra: ", err)
 	}
-	// O_EXCL: se outro processo criou no meio-tempo, usa a dele
-	f, err := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	wrapped, werr := osWrapKey(newKey)
+	if werr != nil {
+		log.Fatal("[KeyHybrid] falha ao selar chave mestra nova: ", werr)
+	}
+	f, err := os.OpenFile(wrappedPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if errors.Is(err, os.ErrExist) {
-		return loadOrCreateMasterKey(keyPath)
+		return loadOrCreateMasterKey(dir)
 	}
 	if err != nil {
-		log.Fatal("[KeyHybrid] falha ao gravar chave mestra: ", err)
+		log.Fatal("[KeyHybrid] falha ao gravar chave mestra selada: ", err)
 	}
-	if _, err := f.Write(newKey); err != nil {
+	if _, err := f.Write(wrapped); err != nil {
 		f.Close()
-		os.Remove(keyPath)
-		log.Fatal("[KeyHybrid] falha ao gravar chave mestra: ", err)
+		os.Remove(wrappedPath)
+		log.Fatal("[KeyHybrid] falha ao gravar chave mestra selada: ", err)
 	}
 	if err := f.Close(); err != nil {
-		log.Fatal("[KeyHybrid] falha ao gravar chave mestra: ", err)
+		log.Fatal("[KeyHybrid] falha ao gravar chave mestra selada: ", err)
 	}
 	return newKey
 }
@@ -151,10 +185,7 @@ func loadOrCreateMasterKey(keyPath string) []byte {
 // (app, run_linux.sh, systemd) subia uma cópia diferente e abria um cofre vazio.
 // --dir continua valendo por cima.
 func dataDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "pb_data"
-	}
+	home := homeDir()
 	dir := filepath.Join(home, ".keyhybrid", "pb_data")
 	if _, err := os.Stat(dir); err == nil {
 		return dir
@@ -171,26 +202,26 @@ func dataDir() string {
 	return dir
 }
 
-func encryptSecretAtRest(plain string) string {
+func encryptSecretAtRest(plain string) (string, error) {
 	plain = strings.TrimSpace(plain)
 	if plain == "" || strings.HasPrefix(plain, "enc:v1:") {
-		return plain
+		return plain, nil
 	}
 	key := getOrCreateMasterKey()
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return plain
+		return "", err
 	}
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return plain
+		return "", err
 	}
 	nonce := make([]byte, gcm.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return plain
+		return "", err
 	}
 	sealed := gcm.Seal(nonce, nonce, []byte(plain), nil)
-	return "enc:v1:" + base64.StdEncoding.EncodeToString(sealed)
+	return "enc:v1:" + base64.StdEncoding.EncodeToString(sealed), nil
 }
 
 func decryptSecretAtRest(stored string) string {
@@ -217,7 +248,11 @@ func decryptSecretAtRest(stored string) string {
 	if err != nil {
 		return ""
 	}
-	return string(plain)
+	res := string(plain)
+	for i := range plain {
+		plain[i] = 0
+	}
+	return res
 }
 
 func loadLocalXiaomiToken() string {
@@ -338,11 +373,15 @@ func main() {
 			for _, r := range recs {
 				raw := r.GetString("secret_key")
 				if raw != "" && !strings.HasPrefix(raw, "enc:v1:") {
-					if r.GetString("masked_key") == "" {
-						r.Set("masked_key", maskSecret(raw))
+					enc, err := encryptSecretAtRest(raw)
+					if err != nil {
+						log.Fatalf("[KeyHybrid] erro ao cifrar chave na migração: %v", err)
 					}
-					r.Set("secret_key", encryptSecretAtRest(raw))
-					_ = app.Save(r)
+					r.Set("secret_key", enc)
+					r.Set("masked_key", "")
+					if err := app.Save(r); err != nil {
+						log.Fatalf("[KeyHybrid] erro ao salvar chave na migração: %v", err)
+					}
 				}
 			}
 		}
@@ -354,15 +393,39 @@ func main() {
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		cliToken := loadOrCreateCLIToken()
 
+		// Configurar CORS estrito do PocketBase (anti CSRF / Origin evil)
+		apis.DefaultCORSConfig.AllowOrigins = []string{
+			"tauri://localhost",
+			"http://tauri.localhost",
+			"https://tauri.localhost",
+			"http://localhost:1420",
+			"http://127.0.0.1:1420",
+		}
+		apis.DefaultCORSConfig.AllowOriginFunc = func(origin string) (bool, error) {
+			return originAllowed(origin, "127.0.0.1:8090"), nil
+		}
+
 		// Guarda de entrada: Host loopback (anti DNS rebinding) e Origin só da interface local
 		e.Router.BindFunc(func(evt *core.RequestEvent) error {
 			if !hostAllowed(evt.Request.Host) {
+				evt.Response.Header().Del("Access-Control-Allow-Origin")
 				return evt.ForbiddenError("Host não permitido", nil)
 			}
 			origin := evt.Request.Header.Get("Origin")
 			if origin != "" && !originAllowed(origin, evt.Request.Host) {
+				evt.Response.Header().Del("Access-Control-Allow-Origin")
 				return evt.ForbiddenError("Origem não permitida", nil)
 			}
+
+			evt.Response.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
+
+			secFetchSite := evt.Request.Header.Get("Sec-Fetch-Site")
+			if (secFetchSite == "cross-site" || secFetchSite == "same-site") &&
+				evt.Request.Method != http.MethodGet && evt.Request.Method != http.MethodHead && evt.Request.Method != http.MethodOptions {
+				evt.Response.Header().Del("Access-Control-Allow-Origin")
+				return evt.ForbiddenError("Sec-Fetch-Site não permitido", nil)
+			}
+
 			if origin != "" {
 				evt.Response.Header().Set("Access-Control-Allow-Origin", origin)
 			}
@@ -437,6 +500,7 @@ func main() {
 			if !tokenValid(evt.Request, cliToken) {
 				return evt.UnauthorizedError("Token local inválido", nil)
 			}
+			evt.Request.Body = http.MaxBytesReader(evt.Response, evt.Request.Body, 1<<20)
 			var req KeyCreateRequest
 			if err := evt.BindBody(&req); err != nil {
 				return evt.BadRequestError("Dados inválidos", err)
@@ -482,8 +546,8 @@ func main() {
 				authPrefix = req.AuthPrefix
 				if authHeader == "" {
 					authHeader, authPrefix = "Authorization", "Bearer "
-				} else if !authHeaderRe.MatchString(authHeader) {
-					return evt.BadRequestError("Cabeçalho de autenticação inválido", nil)
+				} else if !isAllowedAuthHeader(authHeader) {
+					return evt.BadRequestError("Cabeçalho de autenticação proibido ou inválido", nil)
 				}
 			}
 
@@ -507,11 +571,16 @@ func main() {
 				record = core.NewRecord(collection)
 			}
 
+			encSecret, err := encryptSecretAtRest(req.SecretKey)
+			if err != nil {
+				return evt.InternalServerError("Falha ao cifrar chave secreta", err)
+			}
+
 			record.Set("alias", req.Alias)
 			record.Set("provider", req.Provider)
 			record.Set("kind", req.Kind)
-			record.Set("secret_key", encryptSecretAtRest(req.SecretKey))
-			record.Set("masked_key", maskSecret(req.SecretKey))
+			record.Set("secret_key", encSecret)
+			record.Set("masked_key", "")
 			record.Set("base_url", baseURL)
 			record.Set("auth_header", authHeader)
 			record.Set("auth_prefix", authPrefix)
@@ -650,8 +719,13 @@ func main() {
 
 		// Handler Universal compatível com OpenAI / OpenRouter (/v1/chat/completions e /api/ai/proxy/chat)
 		proxyChatHandler := func(evt *core.RequestEvent) error {
+			evt.Request.Body = http.MaxBytesReader(evt.Response, evt.Request.Body, 4<<20)
 			bodyBytes, err := io.ReadAll(evt.Request.Body)
 			if err != nil {
+				var maxErr *http.MaxBytesError
+				if errors.As(err, &maxErr) {
+					return evt.Error(http.StatusRequestEntityTooLarge, "Corpo da requisição excede o limite permitido", err)
+				}
 				return evt.BadRequestError("Falha ao ler corpo da requisição", err)
 			}
 			bodyBytes = bytes.TrimPrefix(bodyBytes, []byte("\xef\xbb\xbf"))
@@ -673,6 +747,10 @@ func main() {
 				delete(payload, "alias")
 			}
 
+			if requestedAlias == "" && !tokenValid(evt.Request, cliToken) {
+				return evt.UnauthorizedError("Informe Authorization: Bearer kh-<alias>", nil)
+			}
+
 			allRecords, _ := app.FindAllRecords("vault_keys")
 			allRecords = onlyAI(allRecords)
 			var matchedRecord *core.Record
@@ -685,10 +763,11 @@ func main() {
 						break
 					}
 				}
-			}
-
-			// 2. Se não especificou alias, buscar a chave marcada como active = true
-			if matchedRecord == nil {
+				if matchedRecord == nil {
+					return evt.NotFoundError("Chave não encontrada: "+requestedAlias, nil)
+				}
+			} else {
+				// 2. Se não especificou alias, buscar a chave marcada como active = true
 				for _, r := range allRecords {
 					if r.GetBool("active") {
 						matchedRecord = r
@@ -697,25 +776,17 @@ func main() {
 				}
 			}
 
-			// 3. Fallback: pegar a primeira chave disponível no banco
-			if matchedRecord == nil && len(allRecords) > 0 {
-				matchedRecord = allRecords[0]
+			if matchedRecord == nil {
+				return evt.BadRequestError(
+					"Nenhuma chave cadastrada no KeyHybrid. Adicione sua chave na interface do KeyHybrid.",
+					nil,
+				)
 			}
 
-			var secretKey string
-			var provider string
-			var baseURL string
-			var defaultModel string
-
-			if matchedRecord != nil {
-				secretKey = decryptSecretAtRest(matchedRecord.GetString("secret_key"))
-				provider = matchedRecord.GetString("provider")
-				baseURL = matchedRecord.GetString("base_url")
-				defaultModel = matchedRecord.GetString("default_model")
-			} else {
-				secretKey = os.Getenv("OPENROUTER_API_KEY")
-				provider = "openrouter"
-			}
+			secretKey := decryptSecretAtRest(matchedRecord.GetString("secret_key"))
+			provider := matchedRecord.GetString("provider")
+			baseURL := matchedRecord.GetString("base_url")
+			defaultModel := matchedRecord.GetString("default_model")
 
 			if secretKey == "" {
 				return evt.BadRequestError(
@@ -831,6 +902,9 @@ func main() {
 				requestedAlias = strings.TrimSpace(authHeader[7:])
 				requestedAlias = strings.TrimPrefix(strings.ToLower(requestedAlias), "kh-")
 			}
+			if requestedAlias == "" && !tokenValid(evt.Request, cliToken) {
+				return "", evt.UnauthorizedError("Informe Authorization: Bearer kh-<alias>", nil)
+			}
 			allRecords, _ := app.FindAllRecords("vault_keys")
 			allRecords = onlyAI(allRecords)
 			var matchedRecord *core.Record
@@ -841,8 +915,10 @@ func main() {
 						break
 					}
 				}
-			}
-			if matchedRecord == nil {
+				if matchedRecord == nil {
+					return "", evt.NotFoundError("Chave não encontrada: "+requestedAlias, nil)
+				}
+			} else {
 				for _, r := range allRecords {
 					if r.GetBool("active") {
 						matchedRecord = r
@@ -850,23 +926,29 @@ func main() {
 					}
 				}
 			}
-			if matchedRecord == nil && len(allRecords) > 0 {
-				matchedRecord = allRecords[0]
+			if matchedRecord == nil {
+				return "", evt.BadRequestError("Nenhuma chave cadastrada no KeyHybrid", nil)
 			}
-			if matchedRecord != nil {
-				return decryptSecretAtRest(matchedRecord.GetString("secret_key")), nil
+			secret := decryptSecretAtRest(matchedRecord.GetString("secret_key"))
+			if secret == "" {
+				return "", evt.BadRequestError("Nenhuma chave cadastrada no KeyHybrid", nil)
 			}
-			return os.Getenv("OPENROUTER_API_KEY"), nil
+			return secret, nil
 		}
 
 		// Proxy Universal para Text-to-Speech (HeyGen Voice Turbo, ElevenLabs, etc.) -> POST /v1/audio/speech
 		e.Router.POST("/v1/audio/speech", func(evt *core.RequestEvent) error {
-			secretKey, _ := resolveVaultSecret(evt)
-			if secretKey == "" {
-				return evt.BadRequestError("Nenhuma chave cadastrada no KeyHybrid", nil)
+			secretKey, err := resolveVaultSecret(evt)
+			if err != nil {
+				return err
 			}
+			evt.Request.Body = http.MaxBytesReader(evt.Response, evt.Request.Body, 1<<20)
 			bodyBytes, err := io.ReadAll(evt.Request.Body)
 			if err != nil {
+				var maxErr *http.MaxBytesError
+				if errors.As(err, &maxErr) {
+					return evt.Error(http.StatusRequestEntityTooLarge, "Corpo excede limite", err)
+				}
 				return evt.BadRequestError("Falha ao ler corpo", err)
 			}
 			bodyBytes = bytes.TrimPrefix(bodyBytes, []byte("\xef\xbb\xbf"))
@@ -902,12 +984,17 @@ func main() {
 
 		// Proxy Universal para Geração de Vídeo Assíncrona (HeyGen Video, Veo, Seedance, Wan) -> POST /v1/videos
 		e.Router.POST("/v1/videos", func(evt *core.RequestEvent) error {
-			secretKey, _ := resolveVaultSecret(evt)
-			if secretKey == "" {
-				return evt.BadRequestError("Nenhuma chave cadastrada no KeyHybrid", nil)
+			secretKey, err := resolveVaultSecret(evt)
+			if err != nil {
+				return err
 			}
+			evt.Request.Body = http.MaxBytesReader(evt.Response, evt.Request.Body, 1<<20)
 			bodyBytes, err := io.ReadAll(evt.Request.Body)
 			if err != nil {
+				var maxErr *http.MaxBytesError
+				if errors.As(err, &maxErr) {
+					return evt.Error(http.StatusRequestEntityTooLarge, "Corpo excede limite", err)
+				}
 				return evt.BadRequestError("Falha ao ler corpo", err)
 			}
 			bodyBytes = bytes.TrimPrefix(bodyBytes, []byte("\xef\xbb\xbf"))
@@ -943,11 +1030,15 @@ func main() {
 
 		// Consulta de Status de Vídeo Assíncrono -> GET /v1/videos/{id}
 		e.Router.GET("/v1/videos/{id}", func(evt *core.RequestEvent) error {
-			secretKey, _ := resolveVaultSecret(evt)
-			if secretKey == "" {
-				return evt.BadRequestError("Nenhuma chave cadastrada no KeyHybrid", nil)
+			secretKey, err := resolveVaultSecret(evt)
+			if err != nil {
+				return err
 			}
 			jobId := evt.Request.PathValue("id")
+			if !jobIdRe.MatchString(jobId) {
+				return evt.BadRequestError("ID de vídeo inválido", nil)
+			}
+			jobId = url.PathEscape(jobId)
 			httpReq, err := http.NewRequestWithContext(
 				evt.Request.Context(),
 				http.MethodGet,
@@ -978,12 +1069,16 @@ func main() {
 
 		// Download do arquivo binário de vídeo gerado (.mp4) -> GET /v1/videos/{id}/content
 		e.Router.GET("/v1/videos/{id}/content", func(evt *core.RequestEvent) error {
-			secretKey, _ := resolveVaultSecret(evt)
-			if secretKey == "" {
-				return evt.BadRequestError("Nenhuma chave cadastrada no KeyHybrid", nil)
+			secretKey, err := resolveVaultSecret(evt)
+			if err != nil {
+				return err
 			}
 			jobId := evt.Request.PathValue("id")
-			query := evt.Request.URL.RawQuery
+			if !jobIdRe.MatchString(jobId) {
+				return evt.BadRequestError("ID de vídeo inválido", nil)
+			}
+			jobId = url.PathEscape(jobId)
+			query := evt.Request.URL.Query().Encode()
 			target := "https://openrouter.ai/api/v1/videos/" + jobId + "/content"
 			if query != "" {
 				target += "?" + query
@@ -1018,9 +1113,9 @@ func main() {
 
 		// Listagem dos modelos permitidos pela chave do usuário -> GET /v1/models
 		e.Router.GET("/v1/models", func(evt *core.RequestEvent) error {
-			secretKey, _ := resolveVaultSecret(evt)
-			if secretKey == "" {
-				return evt.BadRequestError("Nenhuma chave cadastrada no KeyHybrid", nil)
+			secretKey, err := resolveVaultSecret(evt)
+			if err != nil {
+				return err
 			}
 			httpReq, err := http.NewRequestWithContext(
 				evt.Request.Context(),
@@ -1246,55 +1341,95 @@ func main() {
 
 		e.Router.GET("/api/keyhybrid/friday/state", func(evt *core.RequestEvent) error {
 			secretKey, _ := resolveVaultSecret(evt)
+			fridayMu.Lock()
+			resEnabled := fridayEnabledState && secretKey != ""
+			resMuted := time.Now().Before(fridayMuteUntil)
+			resEvt := lastFridayEvent
+			fridayMu.Unlock()
 			return evt.JSON(http.StatusOK, map[string]any{
-				"enabled":        fridayEnabledState && secretKey != "",
-				"muted":          time.Now().Before(fridayMuteUntil),
+				"enabled":        resEnabled,
+				"muted":          resMuted,
 				"has_openrouter": secretKey != "",
-				"event":          lastFridayEvent,
+				"event":          resEvt,
 			})
 		})
 
 		e.Router.POST("/api/keyhybrid/friday/state", func(evt *core.RequestEvent) error {
+			if !tokenValid(evt.Request, cliToken) {
+				return evt.UnauthorizedError("Token local inválido", nil)
+			}
+			evt.Request.Body = http.MaxBytesReader(evt.Response, evt.Request.Body, 64<<10)
 			var body struct {
 				Enabled *bool `json:"enabled"`
 				MuteMs  int   `json:"mute_ms"`
 			}
-			b, _ := io.ReadAll(evt.Request.Body)
+			b, err := io.ReadAll(evt.Request.Body)
+			if err != nil {
+				var maxErr *http.MaxBytesError
+				if errors.As(err, &maxErr) {
+					return evt.Error(http.StatusRequestEntityTooLarge, "Corpo excede limite", err)
+				}
+				return evt.BadRequestError("Falha ao ler corpo", err)
+			}
 			_ = json.Unmarshal(b, &body)
+			fridayMu.Lock()
 			if body.Enabled != nil {
 				fridayEnabledState = *body.Enabled
 			}
 			if body.MuteMs > 0 {
 				fridayMuteUntil = time.Now().Add(time.Duration(body.MuteMs) * time.Millisecond)
 			}
+			resEnabled := fridayEnabledState
+			resMuted := time.Now().Before(fridayMuteUntil)
+			fridayMu.Unlock()
 			return evt.JSON(http.StatusOK, map[string]any{
-				"enabled": fridayEnabledState,
-				"muted":   time.Now().Before(fridayMuteUntil),
+				"enabled": resEnabled,
+				"muted":   resMuted,
 			})
 		})
 
 		// Rota da Assistente Padrão "Sexta-Feira" (F.R.I.D.A.Y.) integrada ao KeyHybrid + Smart Home Xiaomi
 		e.Router.POST("/api/keyhybrid/friday/assist", func(evt *core.RequestEvent) error {
-			secretKey, _ := resolveVaultSecret(evt)
-			if secretKey == "" {
+			if !tokenValid(evt.Request, cliToken) {
+				return evt.UnauthorizedError("Token local inválido", nil)
+			}
+			secretKey, err := resolveVaultSecret(evt)
+			if err != nil || secretKey == "" {
 				return evt.BadRequestError("A Sexta-Feira requer uma chave da OpenRouter cadastrada no KeyHybrid.", nil)
 			}
 
+			evt.Request.Body = http.MaxBytesReader(evt.Response, evt.Request.Body, 1<<20)
 			var req struct {
 				Text     string `json:"text"`
 				BulbIP   string `json:"bulb_ip"`
 				Greeting bool   `json:"greeting"`
 			}
-			bodyBytes, _ := io.ReadAll(evt.Request.Body)
+			bodyBytes, err := io.ReadAll(evt.Request.Body)
+			if err != nil {
+				var maxErr *http.MaxBytesError
+				if errors.As(err, &maxErr) {
+					return evt.Error(http.StatusRequestEntityTooLarge, "Corpo excede limite", err)
+				}
+				return evt.BadRequestError("Falha ao ler corpo", err)
+			}
 			bodyBytes = bytes.TrimPrefix(bodyBytes, []byte("\xef\xbb\xbf"))
 			_ = json.Unmarshal(bodyBytes, &req)
 
+			if req.BulbIP != "" {
+				ip := net.ParseIP(req.BulbIP)
+				if ip == nil || (!ip.IsPrivate() && !ip.IsLoopback()) {
+					return evt.BadRequestError("IP da lâmpada inválido ou não privado", nil)
+				}
+			}
+
 			// Caso seja apenas a ativação da Sexta-Feira na interface
 			if req.Greeting {
+				fridayMu.Lock()
 				fridayEnabledState = true
 				greetText := "Sexta-Feira online, chefe. Estou na escuta. Quando quiser, basta me chamar pelo nome."
 				audioB64 := synthesizeFridayVoice(evt, secretKey, greetText)
 				fridayMuteUntil = time.Now().Add(5 * time.Second)
+				fridayMu.Unlock()
 				return evt.JSON(http.StatusOK, map[string]any{
 					"reply":        greetText,
 					"audio_base64": audioB64,
@@ -1521,6 +1656,7 @@ Regras para "rgb" (inteiro decimal de 0xRRGGBB):
 			audioB64 := synthesizeFridayVoice(evt, secretKey, parsed.Reply)
 
 			evID := time.Now().UnixMilli()
+			fridayMu.Lock()
 			lastFridayEvent = map[string]any{
 				"event_id":     evID,
 				"text":         userText,
@@ -1532,8 +1668,10 @@ Regras para "rgb" (inteiro decimal de 0xRRGGBB):
 				"light_status": lightStatus,
 				"audio_base64": audioB64,
 			}
+			resEvt := lastFridayEvent
+			fridayMu.Unlock()
 
-			return evt.JSON(http.StatusOK, lastFridayEvent)
+			return evt.JSON(http.StatusOK, resEvt)
 		})
 
 		return e.Next()

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -21,6 +22,38 @@ var (
 	authHeaderRe = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
 	envNameRe    = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
+
+func homeDir() string {
+	if h := os.Getenv("KEYHYBRID_HOME"); h != "" {
+		return h
+	}
+	if h := os.Getenv("HOME"); h != "" {
+		return h
+	}
+	if h := os.Getenv("USERPROFILE"); h != "" {
+		return h
+	}
+	if h, err := os.UserHomeDir(); err == nil && h != "" {
+		return h
+	}
+	return "."
+}
+
+func isAllowedAuthHeader(h string) bool {
+	if !authHeaderRe.MatchString(h) {
+		return false
+	}
+	lh := strings.ToLower(strings.TrimSpace(h))
+	switch lh {
+	case "host", "content-length", "transfer-encoding", "connection", "te", "trailer",
+		"upgrade", "content-encoding", "expect", "forwarded":
+		return false
+	}
+	if strings.HasPrefix(lh, "proxy-") || strings.HasPrefix(lh, "x-forwarded-") {
+		return false
+	}
+	return true
+}
 
 // Origens do WebView (Tauri) e da interface local; qualquer outra leva 403
 var allowedOrigins = map[string]bool{
@@ -46,11 +79,7 @@ func originAllowed(origin, host string) bool {
 }
 
 func cliTokenPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "."
-	}
-	return filepath.Join(home, ".keyhybrid", ".cli.token")
+	return filepath.Join(homeDir(), ".keyhybrid", ".cli.token")
 }
 
 // Token local de 32 bytes em hex: quem não lê ~/.keyhybrid não usa o cofre por HTTP
@@ -85,8 +114,19 @@ func validateServiceBaseURL(raw string) (string, error) {
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" {
 		return "", errors.New("URL base deve começar com https:// e ter um host")
 	}
-	if u.User != nil || strings.ContainsAny(base, "?#") {
+	if u.User != nil || strings.ContainsAny(base, "?#") || u.RawQuery != "" || u.Fragment != "" {
 		return "", errors.New("URL base não pode ter usuário, senha, query ou fragmento")
+	}
+	lowPath := strings.ToLower(u.EscapedPath())
+	if strings.Contains(lowPath, "%2f") || strings.Contains(lowPath, "%2e") ||
+		strings.Contains(lowPath, "%5c") || strings.Contains(lowPath, "%00") {
+		return "", errors.New("URL base não pode conter caracteres codificados no path")
+	}
+	if u.Path != "" {
+		cleaned := path.Clean(u.Path)
+		if cleaned != u.Path && cleaned != u.Path+"/" {
+			return "", errors.New("URL base possui caminho inválido ou não canônico")
+		}
 	}
 	return base, nil
 }

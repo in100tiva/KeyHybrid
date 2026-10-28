@@ -36,9 +36,21 @@ def play_mp3_sounddevice(b64_mp3: str):
     except Exception as e:
         print("[FRIDAY-EAR] Erro ao tocar MP3:", e, flush=True)
 
+def load_cli_token() -> str:
+    home = os.environ.get("KEYHYBRID_HOME") or os.environ.get("HOME") or os.environ.get("USERPROFILE") or "."
+    path = os.path.join(home, ".keyhybrid", ".cli.token")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
 def check_friday_enabled() -> bool:
     try:
         req = urllib.request.Request(f"{GATEWAY}/api/keyhybrid/friday/state", method="GET")
+        tok = load_cli_token()
+        if tok:
+            req.add_header("X-KeyHybrid-Token", tok)
         with urllib.request.urlopen(req, timeout=1.0) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             return bool(data.get("enabled", True))
@@ -46,16 +58,14 @@ def check_friday_enabled() -> bool:
         return True
 
 def is_friday_command(text: str) -> bool:
-    norm = strip_accents(text).strip()
+    norm = strip_accents(text).strip().lower()
     if len(norm) < 3:
         return False
-    triggers = [
-        "sexta", "sista", "cesta", "sesta", "feira", "friday",
-        "apag", "deslig", "acend", "ligar", "ligue", "liga",
-        "lampada", "luz", "azul", "vermelh", "verd", "rox",
-        "amarel", "branc", "cian", "brilho", "cor"
-    ]
-    return any(t in norm for t in triggers)
+    wake_words = ("sexta", "sista", "cesta", "sesta", "friday")
+    words = norm.split()
+    if not words:
+        return False
+    return any(words[0].startswith(w) for w in wake_words)
 
 def send_to_friday(text: str):
     try:
@@ -64,7 +74,10 @@ def send_to_friday(text: str):
         req = urllib.request.Request(
             f"{GATEWAY}/api/keyhybrid/friday/assist",
             data=payload,
-            headers={"Content-Type": "application/json; charset=utf-8"},
+            headers={
+                "Content-Type": "application/json; charset=utf-8",
+                "X-KeyHybrid-Token": load_cli_token(),
+            },
             method="POST"
         )
         with urllib.request.urlopen(req, timeout=30) as resp:

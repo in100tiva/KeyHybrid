@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -135,6 +136,7 @@ func TestMaskWriter(t *testing.T) {
 
 func TestDataDirFicaNoHome(t *testing.T) {
 	home := t.TempDir()
+	t.Setenv("KEYHYBRID_HOME", home)
 	t.Setenv("HOME", home)
 	want := filepath.Join(home, ".keyhybrid", "pb_data")
 	if got := dataDir(); got != want {
@@ -146,16 +148,109 @@ func TestDataDirFicaNoHome(t *testing.T) {
 }
 
 func TestMasterKeyNaoSobrescreve(t *testing.T) {
-	p := filepath.Join(t.TempDir(), ".master.key")
-	k1 := loadOrCreateMasterKey(p)
+	dir := t.TempDir()
+	k1 := loadOrCreateMasterKey(dir)
 	if len(k1) != 32 {
 		t.Fatalf("chave nova com %d bytes", len(k1))
 	}
-	if k2 := loadOrCreateMasterKey(p); !bytes.Equal(k1, k2) {
+	if k2 := loadOrCreateMasterKey(dir); !bytes.Equal(k1, k2) {
 		t.Fatal("segunda leitura gerou outra chave")
 	}
-	if fi, _ := os.Stat(p); fi.Mode().Perm() != 0600 {
-		t.Fatalf("permissão %v, want 0600", fi.Mode().Perm())
+	wp := filepath.Join(dir, ".master.key.wrapped")
+	if runtime.GOOS != "windows" {
+		if fi, _ := os.Stat(wp); fi.Mode().Perm() != 0600 {
+			t.Fatalf("permissão %v, want 0600", fi.Mode().Perm())
+		}
+	}
+}
+
+func TestKH05_MasterKeyNaoEmArquivo(t *testing.T) {
+	dir := t.TempDir()
+	k := loadOrCreateMasterKey(dir)
+	if len(k) != 32 {
+		t.Fatalf("chave com %d bytes", len(k))
+	}
+	// Arquivo em claro .master.key NÃO pode existir
+	if _, err := os.Stat(filepath.Join(dir, ".master.key")); err == nil {
+		t.Fatal(".master.key em claro existe no disco!")
+	}
+	// Arquivo .master.key.wrapped DEVE existir
+	if _, err := os.Stat(filepath.Join(dir, ".master.key.wrapped")); err != nil {
+		t.Fatal(".master.key.wrapped não foi criado!")
+	}
+	// Segunda leitura deve decifrar exatamente a mesma chave
+	k2 := loadOrCreateMasterKey(dir)
+	if !bytes.Equal(k, k2) {
+		t.Fatal("segunda leitura da chave selada retornou bytes diferentes")
+	}
+}
+
+func TestKH19_HomeOverride(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("KEYHYBRID_HOME", tmp)
+	if got := homeDir(); got != tmp {
+		t.Fatalf("homeDir() = %q, want %q", got, tmp)
+	}
+}
+
+func TestKH04_MaskedKeyNaoContemPrefixo(t *testing.T) {
+	masked := maskSecret("sk-or-v1-abcdef1234567890")
+	if strings.HasPrefix(masked, "sk-or-") {
+		t.Errorf("maskSecret vazou prefixo: %s", masked)
+	}
+	if !strings.HasSuffix(masked, "7890") {
+		t.Errorf("maskSecret não preservou sufixo: %s", masked)
+	}
+	maskedCurto := maskSecret("12345678")
+	if maskedCurto != "••••••••" {
+		t.Errorf("maskSecret curto = %q, want ••••••••", maskedCurto)
+	}
+}
+
+func TestKH11_AuthHeaderProibido(t *testing.T) {
+	bad := []string{"Host", "Content-Length", "Transfer-Encoding", "Connection", "TE", "Trailer", "Upgrade", "Content-Encoding", "Expect", "X-Forwarded-For", "Forwarded", "Proxy-Authorization"}
+	for _, h := range bad {
+		if isAllowedAuthHeader(h) {
+			t.Errorf("isAllowedAuthHeader(%q) = true, want false", h)
+		}
+	}
+	good := []string{"Authorization", "X-Api-Key", "apikey", "my-custom-key"}
+	for _, h := range good {
+		if !isAllowedAuthHeader(h) {
+			t.Errorf("isAllowedAuthHeader(%q) = false, want true", h)
+		}
+	}
+}
+
+func TestKH10_ValidateServiceBaseURL(t *testing.T) {
+	bad := []string{
+		"https://h1.example/%2e%2e",
+		"https://h1.example/%2F%2Fevil",
+		"https://h1.example/x?y",
+		"https://h1.example/x#y",
+		"https://h1.example/%5c",
+		"https://h1.example/%00",
+		"https://h1.example/a/../b",
+	}
+	for _, b := range bad {
+		if _, err := validateServiceBaseURL(b); err == nil {
+			t.Errorf("validateServiceBaseURL(%q) aceitou, deveria recusar", b)
+		}
+	}
+}
+
+func TestKH16_JobIdRegex(t *testing.T) {
+	valid := []string{"job_123", "abc-456", "ABC_123-xyz"}
+	invalid := []string{"../evil", "job/123", "job%2fevil", "job?query=1"}
+	for _, id := range valid {
+		if !jobIdRe.MatchString(id) {
+			t.Errorf("jobIdRe(%q) = false, want true", id)
+		}
+	}
+	for _, id := range invalid {
+		if jobIdRe.MatchString(id) {
+			t.Errorf("jobIdRe(%q) = true, want false", id)
+		}
 	}
 }
 

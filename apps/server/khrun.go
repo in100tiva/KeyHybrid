@@ -168,9 +168,9 @@ func isTerminal(f *os.File) bool {
 	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
 
-// Máscara só em saída não interativa (pipe, agente, log); terminal recebe o texto puro
+// Máscara sempre ativa em stdout e stderr para evitar vazamento
 func outWriter(f *os.File, secrets [][]byte) io.Writer {
-	if isTerminal(f) || len(secrets) == 0 {
+	if len(secrets) == 0 {
 		return f
 	}
 	return &maskWriter{dst: f, secrets: secrets}
