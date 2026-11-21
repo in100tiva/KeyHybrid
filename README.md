@@ -230,15 +230,12 @@ O script `run_windows.bat` compila automaticamente o `apps\server\keyhybrid-serv
 ### 3. Gerar Instalador `.msi` / `.exe` para Windows
 
 ```powershell
-# 1. Compilar o servidor Go
-cd apps\server
-go build -o keyhybrid-server.exe .
-
-# 2. Compilar o instalador Desktop Tauri
-cd ..\desktop
+cd apps\desktop
 npm install
 npm run tauri build
 ```
+
+O build compila o servidor Go (`npm run build:server`) e o empacota no instalador: o `keyhybrid-server.exe` é instalado em `server\` ao lado do `desktop.exe`, e o app o inicia sozinho ao abrir. O instalador NSIS encerra o gateway em execução antes de atualizar ou desinstalar.
 
 ---
 
