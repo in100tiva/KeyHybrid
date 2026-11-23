@@ -81,6 +81,9 @@ if desk:
     # Verificação do .deb dentro do CI: servidor empacotado e executável.
     check("dpkg-deb -c" in rr and "server/keyhybrid-server" in rr, "desktop: CI confere server/keyhybrid-server dentro do .deb")
     check(re.search(r"-rwx", rr) is not None, "desktop: CI confere bit de execução do servidor no .deb")
+    check("|| true" not in rr and "continue-on-error" not in json.dumps(desk), "desktop: nenhuma checagem engolida (|| true / continue-on-error)")
+    check(all("if" not in s or s["if"] == "runner.os == 'Linux'" for s in desk.get("steps", [])),
+          "desktop: único if permitido nos steps é runner.os == 'Linux'")
     paths = txt
     check("bundle/deb/" in paths and ".deb" in paths, "desktop: sobe o .deb")
     check("bundle/msi/" in paths and ".msi" in paths, "desktop: sobe o .msi")
@@ -98,7 +101,7 @@ check(re.search(r"startsWith\(\s*github\.ref\s*,\s*'refs/tags/v'\s*\)", str(rel.
 check(rel.get("permissions") == {"contents": "write", "id-token": "write", "attestations": "write"}, "release: permissions inalteradas")
 rr = "\n".join(runs(rel))
 sums = [r for r in runs(rel) if "sha256sum" in r]
-check(sums and "keyhybrid-server-*" in sums[0] and "KeyHybrid_*" in sums[0] and "SHA256SUMS.txt" in sums[0],
+check(len(sums) == 1 and re.search(r"^\s*sha256sum keyhybrid-server-\* KeyHybrid_\* > SHA256SUMS\.txt\s*$", sums[0], flags=re.M) is not None,
       "release: SHA256SUMS.txt cobre servidor e instaladores")
 txt = steps_text(rel)
 check("subject-path" in txt and "dist/*" in txt, "release: atestação continua em dist/*")
@@ -136,7 +139,9 @@ check("cd ../server" in unix and "go build" in unix and re.search(r"-o keyhybrid
       and ".exe" not in unix, f"package.json: build:server:unix gera keyhybrid-server sem .exe (veio {unix!r})")
 
 # ------------------------------------------------------------ Rust: fiação
-lib = (tauri_dir / "src/lib.rs").read_text(encoding="utf-8")
+lib_raw = (tauri_dir / "src/lib.rs").read_text(encoding="utf-8")
+# Comentários não contam como código.
+lib = re.sub(r"//[^\n]*", "", lib_raw)
 check(re.search(r"^\s*mod server_bin;", lib, flags=re.M) is not None, "lib.rs: declara mod server_bin")
 corpo = re.search(r"pub fn ensure_gateway_running\(\)\s*\{(.*?)\n\}", lib, flags=re.S)
 check(corpo is not None, "lib.rs: ensure_gateway_running() sem parâmetros (gateway.rs chama assim)")
@@ -145,10 +150,12 @@ if corpo:
     check("server_bin::candidates(" in c and "server_bin::first_existing(" in c,
           "lib.rs: ensure_gateway_running usa server_bin::candidates + first_existing")
     check("let candidates = [" not in c and ".keyhybrid" not in c, "lib.rs: lista antiga de candidatos removida")
-    check("RESOURCE_DIR" in c, "lib.rs: ensure_gateway_running lê RESOURCE_DIR")
+    check(re.search(r"server_bin::candidates\((?:[^;]*?)RESOURCE_DIR\.get\(\)\.map\(PathBuf::as_path\)\s*,?\s*\)", c, flags=re.S) is not None,
+          "lib.rs: candidates recebe RESOURCE_DIR.get().map(PathBuf::as_path)")
 check(re.search(r"static RESOURCE_DIR:\s*(std::sync::)?OnceLock<PathBuf>", lib) is not None, "lib.rs: static RESOURCE_DIR: OnceLock<PathBuf>")
 setup = re.search(r"\.setup\(\|app\|\s*\{(.*?)\n        \}\)", lib, flags=re.S)
-check(setup is not None and "resource_dir()" in setup.group(1) and "RESOURCE_DIR.set(" in setup.group(1),
+check(setup is not None and re.search(r"if let Ok\((\w+)\) = app\.path\(\)\.resource_dir\(\)\s*\{\s*let _ = RESOURCE_DIR\.set\(\1\);\s*\}",
+                                       setup.group(1)) is not None,
       "lib.rs: setup grava app.path().resource_dir() em RESOURCE_DIR")
 if setup:
     s = setup.group(1)
