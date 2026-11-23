@@ -17,7 +17,7 @@
   "dependencies": {
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
-    "pocketbase": "^0.28.1"
+    "pocketbase": "^0.29.0"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^4.0.1",
