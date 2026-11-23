@@ -18,11 +18,12 @@
 ```bash
 cd apps/server && go vet ./... && go test ./...
 cd apps/desktop && pnpm run check && pnpm run build
+cd apps/desktop/src-tauri && cargo fmt --all -- --check && cargo clippy --all-targets --locked -- -D warnings
 ```
 
 ## Checklist
 
-- [ ] O código segue o estilo do projeto (gofmt limpo, Svelte 5 com runes)
+- [ ] O código segue o estilo do projeto (gofmt limpo, `cargo fmt` limpo, Svelte 5 com runes)
 - [ ] Adicionei ou atualizei testes quando fazia sentido
 - [ ] Atualizei a documentação afetada (`README`, `docs/` ou `CHANGELOG.md`)
 - [ ] **Não** incluí chaves reais, tokens `kh-*`, PINs, `pb_data/` ou `~/.keyhybrid` no diff

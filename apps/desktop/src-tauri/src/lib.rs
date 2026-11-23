@@ -43,20 +43,20 @@ pub fn ensure_gateway_running() {
     ];
 
     for bin_path in candidates {
-        if bin_path.exists() {
-            if let Some(parent) = bin_path.parent() {
-                let mut cmd = Command::new(&bin_path);
-                cmd.arg("serve")
-                    .arg("--http=127.0.0.1:8090")
-                    .current_dir(parent);
-                #[cfg(target_os = "windows")]
-                {
-                    const CREATE_NO_WINDOW: u32 = 0x08000000;
-                    cmd.creation_flags(CREATE_NO_WINDOW);
-                }
-                let _ = cmd.spawn();
-                break;
+        if bin_path.exists()
+            && let Some(parent) = bin_path.parent()
+        {
+            let mut cmd = Command::new(&bin_path);
+            cmd.arg("serve")
+                .arg("--http=127.0.0.1:8090")
+                .current_dir(parent);
+            #[cfg(target_os = "windows")]
+            {
+                const CREATE_NO_WINDOW: u32 = 0x08000000;
+                cmd.creation_flags(CREATE_NO_WINDOW);
             }
+            let _ = cmd.spawn();
+            break;
         }
     }
 }

@@ -34,7 +34,7 @@ Comandos úteis:
 
 ```bash
 make help        # lista os alvos
-make check       # go vet + svelte-check
+make check       # go vet + svelte-check + cargo fmt --check
 make test        # testes Go com -race
 make build       # gateway + interface
 make docker      # imagem local do gateway
@@ -61,7 +61,7 @@ make docker      # imagem local do gateway
 2. Faça *fork*, crie a branch a partir de `main` (`feat/minha-feature`).
 3. Mantenha o PR pequeno e com um único assunto.
 4. Preencha o template: o que muda, como foi testado, checklist.
-5. A CI precisa ficar verde (Go, svelte-check, build e CodeQL).
+5. A CI precisa ficar verde (Go, svelte-check, build, Rust/clippy, revisão de dependências e CodeQL).
 6. Um mantenedor revisa; pelo menos uma aprovação é necessária para o merge.
 
 ## O que ganha merge rápido

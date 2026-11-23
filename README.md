@@ -14,7 +14,7 @@
 
 > **Em 30 segundos:** um cofre local que guarda as chaves reais dos provedores de IA e expõe um gateway compatível com a API da OpenAI em `http://127.0.0.1:8090/v1`. Seus agentes usam tokens virtuais (`kh-openrouter`); a chave real nunca entra em `.env`, histórico de shell ou código.
 
-O **KeyHybrid** é um cofre desktop para chaves de API de IA (**OpenRouter, Google Gemini, Anthropic**) combinado com um **reverse proxy local zero-knowledge**, construído em **Tauri v2 (Rust)**, **Svelte 5** e **Go (PocketBase)**.
+O **KeyHybrid** é um cofre desktop para chaves de API de IA (**OpenRouter, Google Gemini, Anthropic**) combinado com um **reverse proxy local zero-knowledge**, construído em **Tauri v2 (Rust)**, **SvelteKit 3 (Svelte 5)** e **Go (PocketBase)**.
 
 Em vez de espalhar chaves reais (`sk-or-v1-...`, `AIza...`, `sk-ant-...`) por arquivos `.env`, scripts ou agentes autônomos, você armazena a chave **uma única vez** no cofre criptografado e usa apenas tokens virtuais (`Bearer kh-openrouter`).
 
@@ -31,7 +31,7 @@ flowchart LR
     subgraph Client["Clientes & Agentes Locais"]
         CLI["Terminal / cURL / SDK OpenAI"]
         IDE["Agentes de IA (Cursor, etc.)"]
-        UI["Desktop (Svelte 5 + Tauri v2)"]
+        UI["Desktop (SvelteKit 3 + Tauri v2)"]
     end
 
     subgraph SecurityLayer["Camada de Segurança Nativa"]
@@ -140,7 +140,7 @@ docker compose up -d
 
 ```bash
 make help     # alvos disponíveis
-make check    # go vet + svelte-check
+make check    # go vet + svelte-check + cargo fmt --check
 make test     # testes Go com -race
 make build    # gateway + interface
 make docker   # imagem local do gateway
@@ -149,7 +149,7 @@ make docker   # imagem local do gateway
 | Componente | Stack | Comandos |
 | --- | --- | --- |
 | `apps/server` | Go 1.27 + PocketBase | `go build ./...`, `go test -race ./...` |
-| `apps/desktop` | Svelte 5 + Tauri v2 | `pnpm run check`, `pnpm run build` |
+| `apps/desktop` | SvelteKit 3 + Svelte 5 + Tauri v2 | `pnpm run check`, `pnpm run build`, `cargo fmt --check` |
 
 Guia completo em **[docs/INSTALL.md](docs/INSTALL.md)**.
 
@@ -157,7 +157,8 @@ Guia completo em **[docs/INSTALL.md](docs/INSTALL.md)**.
 
 | Item | Status |
 | --- | --- |
-| CI (Go + Svelte 5) | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — `gofmt`, `go vet`, `go build`, `go test -race`, `svelte-check`, build estático |
+| CI (Go + Rust + SvelteKit) | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — `gofmt`, `go vet`, `go build`, `go test -race`, `svelte-check`, build estático, `cargo fmt --check` e `cargo clippy -D warnings` |
+| Revisão de dependências | [`.github/workflows/dependency-review.yml`](.github/workflows/dependency-review.yml) — barra PRs que adicionam dependências com severidade alta |
 | Releases automatizadas | [`.github/workflows/release.yml`](.github/workflows/release.yml) — binários cross-compiled + checksums por tag `v*` |
 | Imagem de container | [`.github/workflows/container.yml`](.github/workflows/container.yml) — multi-arquitetura publicada no GHCR |
 | Análise estática | [CodeQL](https://github.com/in100tiva/KeyHybrid/security/code-scanning) (Go e JavaScript/TypeScript) |
@@ -188,7 +189,7 @@ O que está planejado para a próxima release fica no milestone **[v0.2.0](https
 
 ```text
 apps/server        # gateway Go (PocketBase) + cofre AES-256-GCM + proxy /v1
-apps/desktop       # app Tauri v2 + Svelte 5 (PIN, cofre, UI)
+apps/desktop       # app Tauri v2 + SvelteKit 3 (PIN, cofre, UI)
 docs/              # INSTALL.md, USAGE.md, SPEC e site do GitHub Pages
 .github/           # workflows de CI/release/CodeQL, templates e Dependabot
 Dockerfile         # imagem do gateway (build multi-stage, usuário não-root)
