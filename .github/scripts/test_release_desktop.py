@@ -82,7 +82,15 @@ if desk:
     # Verificação do .deb dentro do CI: servidor empacotado e executável.
     check("dpkg-deb -c" in rr and "server/keyhybrid-server" in rr, "desktop: CI confere server/keyhybrid-server dentro do .deb")
     check(re.search(r"-rwx", rr) is not None, "desktop: CI confere bit de execução do servidor no .deb")
-    check('test "$(dpkg-deb -f "$deb" Package)" = key-hybrid' in rr, "desktop: CI confere o nome do pacote (key-hybrid)")
+    # dpkg-deb -c lista "usr/..." sem "./" (ensaio 45171097256): o padrão tem de aceitar os dois.
+    check("(\\./)?usr/lib/KeyHybrid/server/keyhybrid-server$" in rr, "desktop: grep do servidor aceita caminho com ou sem ./")
+    check("(\\./)?usr/bin/keyhybrid$" in rr, "desktop: CI confere usr/bin/keyhybrid no .deb")
+    check(rr.count("::error::") >= 3, "desktop: cada checagem do .deb falha com ::error:: explicando")
+    cond = str(desk.get("if", ""))
+    check(re.search(r"!\(\s*startsWith\(\s*github\.ref\s*,\s*'refs/tags/'\s*\)\s*&&\s*contains\(\s*github\.ref_name\s*,\s*'-'\s*\)\s*\)", cond) is not None,
+          f"desktop: job pulado em tag de pré-release (veio {cond!r})")
+    check(re.search(r'dpkg-deb -f "\$deb" Package\)', rr) is not None and re.search(r'test "\$\w+" = key-hybrid\b', rr) is not None,
+          "desktop: CI confere o nome do pacote (key-hybrid)")
     check("|| true" not in rr and "continue-on-error" not in json.dumps(desk), "desktop: nenhuma checagem engolida (|| true / continue-on-error)")
     check(all("if" not in s or s["if"] == "runner.os == 'Linux'" for s in desk.get("steps", [])),
           "desktop: único if permitido nos steps é runner.os == 'Linux'")
@@ -104,11 +112,18 @@ rel = jobs.get("release", {})
 needs = rel.get("needs")
 needs = [needs] if isinstance(needs, str) else (needs or [])
 check(sorted(needs) == ["binaries", "desktop"], f"release: needs binaries + desktop (veio {needs})")
-check(re.search(r"startsWith\(\s*github\.ref\s*,\s*'refs/tags/v'\s*\)", str(rel.get("if", ""))) is not None,
+rif = " ".join(str(rel.get("if", "")).split())
+check(re.search(r"startsWith\(\s*github\.ref\s*,\s*'refs/tags/v'\s*\)", rif) is not None,
       "release: só publica em tag v* (workflow_dispatch vira ensaio)")
+check("!cancelled()" in rif and "needs.binaries.result == 'success'" in rif
+      and "needs.desktop.result == 'success'" in rif and "needs.desktop.result == 'skipped'" in rif
+      and "always()" not in rif and "failure" not in rif,
+      f"release: pré-release (desktop skipped) ainda publica o gateway; desktop falho bloqueia (veio {rif!r})")
 check(rel.get("permissions") == {"contents": "write", "id-token": "write", "attestations": "write"}, "release: permissions inalteradas")
 rr = "\n".join(runs(rel))
 sums = [r for r in runs(rel) if "sha256sum" in r]
+check(len(sums) == 1 and re.search(r"^\s*shopt -s nullglob\b", sums[0], flags=re.M) is not None
+      and sums[0].find("nullglob") < sums[0].find("sha256sum"), "release: nullglob antes do sha256sum (pré-release sem KeyHybrid_*)")
 check(len(sums) == 1 and re.search(r"^\s*sha256sum keyhybrid-server-\* KeyHybrid_\* > SHA256SUMS\.txt\s*$", sums[0], flags=re.M) is not None,
       "release: SHA256SUMS.txt cobre servidor e instaladores")
 txt = steps_text(rel)
@@ -133,6 +148,7 @@ if lin_path.exists():
     res = lin.get("bundle", {}).get("resources", {})
     check(res == {"../../server/keyhybrid-server": "server/keyhybrid-server"},
           f"linux: resources leva ../../server/keyhybrid-server -> server/keyhybrid-server (veio {res})")
+    check(lin.get("mainBinaryName") == "keyhybrid", "deb: mainBinaryName keyhybrid (senão vira /usr/bin/desktop)")
     bbc = lin.get("build", {}).get("beforeBuildCommand", "")
     check(bbc == "pnpm run build:server:unix && pnpm run build", f"linux: beforeBuildCommand (veio {bbc!r})")
 
@@ -184,7 +200,7 @@ check("tauri" not in sb, "server_bin.rs: só std (roda sem Tauri)")
 
 # ------------------------------------------------------------ docs
 inst = (ROOT / "docs/INSTALL.md").read_text(encoding="utf-8")
-for termo in ("sudo apt remove key-hybrid", "Get-FileHash", "KeyHybrid_", "_amd64.deb", "_x64_en-US.msi", "_x64-setup.exe", "sudo apt install ./",
+for termo in ("pré-release", "sudo apt remove key-hybrid", "Get-FileHash", "KeyHybrid_", "_amd64.deb", "_x64_en-US.msi", "_x64-setup.exe", "sudo apt install ./",
               "SmartScreen", "Executar assim mesmo", "sha256sum -c", "taskkill /F /IM keyhybrid-server.exe",
               "gh attestation verify"):
     check(termo in inst, f"INSTALL.md menciona {termo!r}")
