@@ -1,0 +1,50 @@
+name: ✨ Sugestão
+description: Propor uma melhoria de produto, segurança ou documentação
+title: '[Sugestão]: '
+labels: ['enhancement']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Antes de abrir, confira se já existe algo parecido em [Issues](https://github.com/in100tiva/KeyHybrid/issues) ou nas [Discussões](https://github.com/in100tiva/KeyHybrid/discussions).
+        Sugestões que reduzam exposição de chaves em texto plano são sempre bem-vindas.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Área
+      options:
+        - Segurança e criptografia
+        - Gateway / compatibilidade OpenAI
+        - Provedores suportados
+        - Interface desktop
+        - CLI (`kh run`)
+        - Documentação e developer experience
+        - Empacotamento e distribuição
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Qual problema isso resolve?
+      description: Descreva o cenário real. Se for uma necessidade de segurança, explique o vetor de ataque.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Solução proposta
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternativas consideradas
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Contexto adicional

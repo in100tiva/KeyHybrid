@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+message: 'Se o KeyHybrid foi útil para você ou embasou um trabalho, cite desta forma:'
+title: 'KeyHybrid: cofre zero-knowledge de chaves de IA e gateway local compatível com a API da OpenAI'
+abstract: >-
+  Cofre desktop criptografado (AES-256-GCM + DPAPI/Secret Service) para chaves de
+  provedores de IA, associado a um gateway local compatível com a API da OpenAI que
+  isola credenciais por alias, injetando a chave real apenas em memória no momento
+  da chamada HTTPS.
+authors:
+  - family-names: 'Oliveira dos Santos'
+    given-names: 'Luan'
+    alias: in100tiva
+    website: 'https://github.com/in100tiva'
+repository-code: 'https://github.com/in100tiva/KeyHybrid'
+url: 'https://in100tiva.github.io/KeyHybrid/'
+license: MIT
+type: software
+version: 0.1.0
+date-released: '2026-11-23'
+keywords:
+  - api-key-vault
+  - zero-knowledge
+  - local-gateway
+  - openai-compatible
+  - ai-security
+  - tauri
+  - svelte
+  - go
+  - pocketbase

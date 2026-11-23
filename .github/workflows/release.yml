@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  binaries:
+    name: Binário ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/server/go.mod
+
+      - name: Compilar gateway
+        working-directory: apps/server
+        env:
+          CGO_ENABLED: '0'
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          name="keyhybrid-server-${{ matrix.goos }}-${{ matrix.goarch }}"
+          ext=""
+          if [ "${{ matrix.goos }}" = "windows" ]; then ext=".exe"; fi
+          mkdir -p dist
+          go build -trimpath -buildvcs=false \
+            -ldflags "-s -w -X main.version=${GITHUB_REF_NAME#v}" \
+            -o "dist/${name}${ext}" .
+
+      - name: Guardar binário
+        uses: actions/upload-artifact@v4
+        with:
+          name: keyhybrid-server-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: apps/server/dist/*
+          if-no-files-found: error
+
+  release:
+    name: Publicar release
+    needs: binaries
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar binários
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Gerar checksums
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          sha256sum keyhybrid-server-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Criar release no GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          name: KeyHybrid ${{ github.ref_name }}
+          generate_release_notes: true
+          files: dist/*
+          fail_on_unmatched_files: true

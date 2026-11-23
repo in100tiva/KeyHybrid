@@ -26,6 +26,10 @@ import (
 
 var (
 	jobIdRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+	// version é injetada no build de release (-ldflags "-X main.version=...")
+	// e serve para suporte: `./keyhybrid-server --version`.
+	version = "dev"
 )
 
 type KeyCreateRequest struct {
@@ -295,6 +299,13 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "run" {
 		os.Exit(runCmd(os.Args[2:]))
 	}
+
+	if len(os.Args) == 2 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
+		log.Printf("keyhybrid-server %s", version)
+		return
+	}
+
+	log.Printf("[KeyHybrid] keyhybrid-server %s", version)
 
 	getOrCreateMasterKey() // chave ilegível para o boot, não uma requisição no meio
 

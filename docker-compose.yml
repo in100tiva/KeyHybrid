@@ -1,0 +1,22 @@
+services:
+  keyhybrid:
+    image: ghcr.io/in100tiva/keyhybrid:latest
+    container_name: keyhybrid-gateway
+    restart: unless-stopped
+    # O gateway recusa Host-Header que não seja loopback (anti DNS rebinding),
+    # então publique a porta apenas em 127.0.0.1.
+    ports:
+      - '127.0.0.1:8090:8090'
+    environment:
+      KEYHYBRID_HOME: /data
+    volumes:
+      - keyhybrid-data:/data
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8090/api/health']
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  keyhybrid-data:

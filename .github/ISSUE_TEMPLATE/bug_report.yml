@@ -1,0 +1,92 @@
+name: 🐞 Bug
+description: Reportar um comportamento inesperado no KeyHybrid
+title: '[Bug]: '
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Obrigado por reportar! Quanto mais contexto, mais rápido o problema é resolvido.
+
+        > ⚠️ **Nunca** cole chaves reais (`sk-or-...`, `AIza...`, `sk-ant-...`), tokens `kh-*`, seu PIN ou o conteúdo de `~/.keyhybrid`.
+        > Para falhas de segurança, use o canal privado em [SECURITY.md](../blob/main/SECURITY.md).
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Checklist
+      options:
+        - label: Procurei issues abertas e não encontrei o mesmo problema
+          required: true
+        - label: Estou na versão mais recente publicada em Releases
+          required: true
+        - label: Removi quaisquer segredos dos logs e capturas de tela
+          required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Componente afetado
+      options:
+        - App desktop (Tauri + Svelte)
+        - Gateway local (Go, porta 8090)
+        - `kh run` / CLI
+        - Instalação e empacotamento (.deb, .msi)
+        - Documentação
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Versão do KeyHybrid
+      description: Tag da release ou saída de `keyhybrid-server --version`
+      placeholder: v0.1.0
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Sistema operacional
+      placeholder: Windows 11 24H2 / Ubuntu 24.04 / macOS 15
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Passos para reproduzir
+      placeholder: |
+        1. Abra o app e desbloqueie o cofre
+        2. Execute `curl http://127.0.0.1:8090/v1/models`
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Comportamento esperado
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Comportamento atual
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs relevantes (sem segredos)
+      description: Saída do terminal, console do app ou do gateway. Remova tokens e caminhos pessoais.
+      render: shell
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Contexto adicional
+      description: Capturas de tela, provedor usado, versão do agente que consumia o gateway, etc.

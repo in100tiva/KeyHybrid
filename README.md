@@ -1,6 +1,12 @@
 # 🛡️ KeyHybrid — Zero-Knowledge API Key Vault & Local AI Gateway
 
+[![CI](https://github.com/in100tiva/KeyHybrid/actions/workflows/ci.yml/badge.svg)](https://github.com/in100tiva/KeyHybrid/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/in100tiva/KeyHybrid/actions/workflows/codeql.yml/badge.svg)](https://github.com/in100tiva/KeyHybrid/actions/workflows/codeql.yml)
+[![Release](https://img.shields.io/github/v/release/in100tiva/KeyHybrid?style=flat-square&color=3DA639)](https://github.com/in100tiva/KeyHybrid/releases)
+[![Container](https://img.shields.io/badge/ghcr.io-keyhybrid-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/in100tiva/KeyHybrid/pkgs/container/keyhybrid)
+[![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-1f6feb?style=flat-square)](https://in100tiva.github.io/KeyHybrid/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-3DA639?style=flat-square)](LICENSE)
+
 ![Go](https://img.shields.io/badge/Go-00ADD8?style=flat-square&logo=go&logoColor=white)
 ![Rust](https://img.shields.io/badge/Rust-000000?style=flat-square&logo=rust&logoColor=white)
 ![Tauri](https://img.shields.io/badge/Tauri-v2-24C8DB?style=flat-square&logo=tauri&logoColor=white)
@@ -62,6 +68,20 @@ flowchart LR
 - **Criptografia dupla em repouso**: AES-256-GCM no SQLite com chave mestra local (`0600`) + DPAPI/Secret Service para credenciais e PIN, com `Zeroize` em Rust.
 - **Fallback de guardrail**: se a OpenRouter recusar um modelo (`HTTP 404`), o gateway reroteia para `openrouter/auto` sem quebrar o agente.
 
+## Download
+
+| O que | Onde |
+| --- | --- |
+| **Binários do gateway** (Linux amd64/arm64, macOS amd64/arm64, Windows amd64) | [Releases](https://github.com/in100tiva/KeyHybrid/releases) — inclui `SHA256SUMS.txt` |
+| **Imagem de container** (multi-arquitetura) | [`ghcr.io/in100tiva/keyhybrid`](https://github.com/in100tiva/KeyHybrid/pkgs/container/keyhybrid) |
+| **App desktop** (`.deb`, `.msi`) | [Build a partir do código](docs/INSTALL.md) por enquanto — instaladores entram nas próximas releases |
+
+Verificar a integridade de um download:
+
+```bash
+sha256sum -c SHA256SUMS.txt
+```
+
 ## Quickstart
 
 ### Linux
@@ -98,12 +118,76 @@ curl http://127.0.0.1:8090/v1/chat/completions \
 
 Chaves de serviço (Vercel, Supabase, GitHub), `kh run` e limitações conhecidas: **[docs/USAGE.md](docs/USAGE.md)**.
 
+## Rodar com Docker
+
+O gateway é publicado como imagem pública no GHCR e roda como usuário não-root, com todo o estado em `/data`.
+
+```bash
+docker run --rm -p 127.0.0.1:8090:8090 \
+  -v keyhybrid-data:/data \
+  ghcr.io/in100tiva/keyhybrid:latest
+```
+
+Ou com Compose (`docker-compose.yml` incluso):
+
+```bash
+docker compose up -d
+```
+
+> A porta é publicada em `127.0.0.1` de propósito: o gateway rejeita `Host` que não seja loopback, como proteção contra DNS rebinding.
+
+## Desenvolvimento
+
+```bash
+make help     # alvos disponíveis
+make check    # go vet + svelte-check
+make test     # testes Go com -race
+make build    # gateway + interface
+make docker   # imagem local do gateway
+```
+
+| Componente | Stack | Comandos |
+| --- | --- | --- |
+| `apps/server` | Go 1.27 + PocketBase | `go build ./...`, `go test -race ./...` |
+| `apps/desktop` | Svelte 5 + Tauri v2 | `pnpm run check`, `pnpm run build` |
+
+Guia completo em **[docs/INSTALL.md](docs/INSTALL.md)**.
+
+## Qualidade e automação
+
+| Item | Status |
+| --- | --- |
+| CI (Go + Svelte 5) | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — `gofmt`, `go vet`, `go build`, `go test -race`, `svelte-check`, build estático |
+| Releases automatizadas | [`.github/workflows/release.yml`](.github/workflows/release.yml) — binários cross-compiled + checksums por tag `v*` |
+| Imagem de container | [`.github/workflows/container.yml`](.github/workflows/container.yml) — multi-arquitetura publicada no GHCR |
+| Análise estática | [CodeQL](https://github.com/in100tiva/KeyHybrid/security/code-scanning) (Go e JavaScript/TypeScript) |
+| Dependências | Dependabot semanal para Go, npm, Cargo, Actions e Docker |
+| Segurança do repositório | Secret scanning com push protection, Dependabot alerts e [política de segurança](SECURITY.md) |
+
+## Documentação
+
+- **[docs/INSTALL.md](docs/INSTALL.md)** — build do zero, dependências por sistema e empacotamento.
+- **[docs/USAGE.md](docs/USAGE.md)** — gateway, aliases, `kh run` e integração com agentes.
+- **[docs/SPEC-cofre-universal.md](docs/SPEC-cofre-universal.md)** — modelo de dados, criptografia e ciclo de vida da chave mestra.
+- **[Site de documentação](https://in100tiva.github.io/KeyHybrid/)** — versão navegável publicada no GitHub Pages.
+
+## Contribuir
+
+Contribuições são bem-vindas. Leia **[CONTRIBUTING.md](CONTRIBUTING.md)** e o **[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)**.
+
+- Bugs e sugestões: use os templates de issue.
+- Dúvidas e ideias: [Discussões](https://github.com/in100tiva/KeyHybrid/discussions).
+- Vulnerabilidades: **nunca** em issue pública — siga o **[SECURITY.md](SECURITY.md)**.
+
 ## Estrutura
 
 ```text
-apps/server    # gateway Go (PocketBase) + cofre AES-256-GCM + proxy /v1
-apps/desktop   # app Tauri v2 + Svelte 5 (PIN, cofre, UI)
-docs/          # INSTALL.md e USAGE.md
+apps/server        # gateway Go (PocketBase) + cofre AES-256-GCM + proxy /v1
+apps/desktop       # app Tauri v2 + Svelte 5 (PIN, cofre, UI)
+docs/              # INSTALL.md, USAGE.md, SPEC e site do GitHub Pages
+.github/           # workflows de CI/release/CodeQL, templates e Dependabot
+Dockerfile         # imagem do gateway (build multi-stage, usuário não-root)
+docker-compose.yml # execução local do gateway em 127.0.0.1:8090
 ```
 
 ## Licença

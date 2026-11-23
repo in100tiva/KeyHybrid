@@ -106,7 +106,7 @@
   ];
 
   let aliasInputEl: HTMLInputElement | undefined = $state();
-  let pinContainerEl: HTMLDivElement | undefined = $state();
+  let pinContainerEl: HTMLElement | undefined = $state();
 
   // Estado da Animação de Entrada (Constelação sem fundo) e Efeito macOS Genie
   let appStage = $state<

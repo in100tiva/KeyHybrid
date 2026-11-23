@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🔐 Vulnerabilidade de segurança
+    url: https://github.com/in100tiva/KeyHybrid/security/advisories/new
+    about: Reporte falhas de segurança em canal privado. Não abra issue pública.
+  - name: 💬 Dúvidas, ideias e showcases
+    url: https://github.com/in100tiva/KeyHybrid/discussions
+    about: Use as Discussões para perguntas de uso, integrações e troca de experiências.
+  - name: 📚 Documentação
+    url: https://in100tiva.github.io/KeyHybrid/
+    about: Guias de instalação, uso do gateway e especificação do cofre.

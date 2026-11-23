@@ -1,0 +1,30 @@
+.git
+.gitignore
+.github
+.vscode
+.idea
+
+# Dependências e artefatos de build
+**/node_modules
+**/.svelte-kit
+**/build
+**/dist
+**/target
+**/pb_data
+**/.keyhybrid
+**/*.db
+**/*.db-*
+
+# Segredos e chaves locais
+**/.master.key
+**/.cli.token
+**/.xiaomi_token
+**/.env
+**/.env.*
+
+# Empacotamento
+*.tar.gz
+*.zip
+*.deb
+*.msi
+*.AppImage

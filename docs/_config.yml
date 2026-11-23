@@ -1,0 +1,9 @@
+title: KeyHybrid
+description: Cofre zero-knowledge de chaves de IA + gateway local compatível com a API da OpenAI
+lang: pt-BR
+theme: jekyll-theme-cayman
+show_downloads: true
+github:
+  repository_url: https://github.com/in100tiva/KeyHybrid
+  zip_url: https://github.com/in100tiva/KeyHybrid/archive/refs/heads/main.zip
+  tar_url: https://github.com/in100tiva/KeyHybrid/archive/refs/heads/main.tar.gz
