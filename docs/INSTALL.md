@@ -111,14 +111,3 @@ npm run tauri build
 ```
 
 O build compila o servidor Go (`npm run build:server`) e o empacota: o `keyhybrid-server.exe` vai para `server\` ao lado do `desktop.exe`. O instalador NSIS encerra o gateway em execução antes de atualizar ou desinstalar.
-
-## 🎙️ Sexta-Feira (opcional)
-
-Reconhecimento de voz contínuo pelo microfone físico (Windows ou Linux):
-
-```bash
-pip install faster-whisper sounddevice av numpy
-python apps/server/friday_ear.py
-```
-
-Para controlar uma lâmpada Xiaomi na LAN (MiIO UDP 54321), crie `apps/server/.xiaomi_token` com o token hexadecimal de 32 caracteres ou defina `XIAOMI_BULB_TOKEN`.
