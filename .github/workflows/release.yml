@@ -58,6 +58,7 @@ jobs:
 
   desktop:
     name: Instalador desktop (${{ matrix.os }})
+    if: ${{ !(startsWith(github.ref, 'refs/tags/') && contains(github.ref_name, '-')) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     permissions:
@@ -136,8 +137,19 @@ jobs:
           set -euo pipefail
           deb=$(ls src-tauri/target/release/bundle/deb/*.deb)
           dpkg-deb -c "$deb" | tee "$RUNNER_TEMP/deb.txt"
-          grep -E '^-rwx.* \./usr/lib/KeyHybrid/server/keyhybrid-server$' "$RUNNER_TEMP/deb.txt"
-          test "$(dpkg-deb -f "$deb" Package)" = key-hybrid
+          if ! grep -E '^-rwx.* (\./)?usr/lib/KeyHybrid/server/keyhybrid-server$' "$RUNNER_TEMP/deb.txt"; then
+            echo "::error::servidor empacotado ausente ou sem permissão de execução no .deb"
+            exit 1
+          fi
+          if ! grep -E '^-rwx.* (\./)?usr/bin/keyhybrid$' "$RUNNER_TEMP/deb.txt"; then
+            echo "::error::binário principal usr/bin/keyhybrid ausente no .deb"
+            exit 1
+          fi
+          pkg=$(dpkg-deb -f "$deb" Package)
+          if ! test "$pkg" = key-hybrid; then
+            echo "::error::nome do pacote Debian inesperado: $pkg (esperado key-hybrid)"
+            exit 1
+          fi
 
       # Com vários padrões no upload, o artifact guardaria deb/, msi/ e nsis/ como subpastas
       # e o `sha256sum KeyHybrid_*` do job release não acharia nada na raiz de dist/.
@@ -158,10 +170,16 @@ jobs:
           if-no-files-found: error
 
   # Só publica em tag v*; workflow_dispatch apenas ensaia os builds de binários e instaladores.
+  # Em tags de pré-release (com '-'), desktop é skipped e a release publica os binários do gateway;
+  # se desktop falhar numa tag estável, a release inteira é bloqueada.
   release:
     name: Publicar release
     needs: [binaries, desktop]
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: >-
+      !cancelled() &&
+      startsWith(github.ref, 'refs/tags/v') &&
+      needs.binaries.result == 'success' &&
+      (needs.desktop.result == 'success' || needs.desktop.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -178,6 +196,7 @@ jobs:
         working-directory: dist
         run: |
           set -euo pipefail
+          shopt -s nullglob
           sha256sum keyhybrid-server-* KeyHybrid_* > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
