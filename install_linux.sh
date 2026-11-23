@@ -55,8 +55,12 @@ echo "[4/5] Compilando o Desktop App (apps/desktop)..."
 cd "$ROOT_DIR/apps/desktop"
 if command -v bun >/dev/null 2>&1; then
   bun install && bun run tauri build --no-bundle
+elif command -v pnpm >/dev/null 2>&1; then
+  pnpm install --frozen-lockfile --config.dangerouslyAllowAllBuilds=true
+  pnpm run tauri build --no-bundle
 else
-  npm install && npm run tauri build -- --no-bundle
+  echo "ERRO: instale o pnpm 10 (veja docs/INSTALL.md) ou o bun e rode de novo." >&2
+  exit 1
 fi
 
 # 5. Atalho no menu de aplicativos
