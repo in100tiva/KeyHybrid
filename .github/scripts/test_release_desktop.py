@@ -75,21 +75,29 @@ if desk:
     check("pnpm install --frozen-lockfile" in rr, "desktop: pnpm install --frozen-lockfile")
     check(".github/scripts/desktop-version.sh" in rr and "github.ref" in txt, "desktop: versão via desktop-version.sh com github.ref")
     builds = [r for r in runs(desk) if "tauri build" in r]
-    check(any("--bundles deb" in r for r in builds), "desktop: tauri build --bundles deb")
+    check(any(re.search(r"--bundles deb --config src-tauri/tauri\.deb\.conf\.json --config \"\$RUNNER_TEMP/tauri\.version\.json\"", r) for r in builds),
+          "desktop: tauri build --bundles deb com tauri.deb.conf.json + versão")
     check(any(re.search(r"--bundles (msi,nsis|nsis,msi)\b", r) for r in builds), "desktop: tauri build --bundles msi,nsis")
     check(all("--config" in r for r in builds) and builds, "desktop: build recebe --config com a versão")
     # Verificação do .deb dentro do CI: servidor empacotado e executável.
     check("dpkg-deb -c" in rr and "server/keyhybrid-server" in rr, "desktop: CI confere server/keyhybrid-server dentro do .deb")
     check(re.search(r"-rwx", rr) is not None, "desktop: CI confere bit de execução do servidor no .deb")
+    check('test "$(dpkg-deb -f "$deb" Package)" = key-hybrid' in rr, "desktop: CI confere o nome do pacote (key-hybrid)")
     check("|| true" not in rr and "continue-on-error" not in json.dumps(desk), "desktop: nenhuma checagem engolida (|| true / continue-on-error)")
     check(all("if" not in s or s["if"] == "runner.os == 'Linux'" for s in desk.get("steps", [])),
           "desktop: único if permitido nos steps é runner.os == 'Linux'")
-    paths = txt
-    check("bundle/deb/" in paths and ".deb" in paths, "desktop: sobe o .deb")
-    check("bundle/msi/" in paths and ".msi" in paths, "desktop: sobe o .msi")
-    check("bundle/nsis/" in paths and "-setup.exe" in paths, "desktop: sobe o -setup.exe (NSIS)")
+    junta = [r for r in runs(desk) if "instaladores" in r and "find src-tauri/target/release/bundle" in r]
+    check(len(junta) == 1 and all(n in junta[0] for n in ("KeyHybrid_*.deb", "KeyHybrid_*.msi", "KeyHybrid_*-setup.exe")),
+          "desktop: step junta .deb/.msi/-setup.exe numa pasta plana $RUNNER_TEMP/instaladores")
     ups = [s for s in desk.get("steps", []) if str(s.get("uses", "")).startswith("actions/upload-artifact@")]
-    check(ups and all(s.get("with", {}).get("if-no-files-found") == "error" for s in ups), "desktop: upload com if-no-files-found: error")
+    check(len(ups) == 1 and ups[0].get("with", {}).get("if-no-files-found") == "error", "desktop: 1 upload com if-no-files-found: error")
+    # Um único padrão, plano: com vários, o artifact preserva deb/ msi/ nsis/ e o sha256sum da raiz falha.
+    check(ups and ups[0].get("with", {}).get("path") == "${{ runner.temp }}/instaladores/*",
+          "desktop: upload de ${{ runner.temp }}/instaladores/* (artifact plano)")
+    nomes = [s.get("name", "") for s in desk.get("steps", [])]
+    i_junta = next((i for i, s in enumerate(desk.get("steps", [])) if "instaladores" in s.get("run", "")), -1)
+    i_up = next((i for i, s in enumerate(desk.get("steps", [])) if str(s.get("uses", "")).startswith("actions/upload-artifact@")), -1)
+    check(0 <= i_junta < i_up, "desktop: juntar vem antes do upload")
 
 # Job release.
 rel = jobs.get("release", {})
@@ -115,8 +123,11 @@ base = json.loads((tauri_dir / "tauri.conf.json").read_text(encoding="utf-8"))
 check(base.get("productName") == "KeyHybrid", "tauri.conf.json: productName KeyHybrid (nome dos assets)")
 check(base.get("bundle", {}).get("active") is True, "tauri.conf.json: bundle ativo")
 
-lin_path = tauri_dir / "tauri.linux.conf.json"
-check(lin_path.exists(), "tauri.linux.conf.json existe")
+# tauri.linux.conf.json seria mesclado em todo build Linux (inclusive o clippy do ci.yml), e o
+# build.rs exige que os resources existam: o servidor só existe no job de release.
+check(not (tauri_dir / "tauri.linux.conf.json").exists(), "tauri.linux.conf.json NÃO existe (quebraria o clippy do CI)")
+lin_path = tauri_dir / "tauri.deb.conf.json"
+check(lin_path.exists(), "tauri.deb.conf.json existe")
 if lin_path.exists():
     lin = json.loads(lin_path.read_text(encoding="utf-8"))
     res = lin.get("bundle", {}).get("resources", {})
@@ -167,7 +178,7 @@ check("tauri" not in sb, "server_bin.rs: só std (roda sem Tauri)")
 
 # ------------------------------------------------------------ docs
 inst = (ROOT / "docs/INSTALL.md").read_text(encoding="utf-8")
-for termo in ("KeyHybrid_", "_amd64.deb", "_x64_en-US.msi", "_x64-setup.exe", "sudo apt install ./",
+for termo in ("sudo apt remove key-hybrid", "Get-FileHash", "KeyHybrid_", "_amd64.deb", "_x64_en-US.msi", "_x64-setup.exe", "sudo apt install ./",
               "SmartScreen", "Executar assim mesmo", "sha256sum -c", "taskkill /F /IM keyhybrid-server.exe",
               "gh attestation verify"):
     check(termo in inst, f"INSTALL.md menciona {termo!r}")
