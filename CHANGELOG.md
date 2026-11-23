@@ -13,6 +13,7 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o 
 - **Política de segurança**: seção sobre os dois advisories sem correção upstream (`glib` e `disintegration/imaging`) e por que eles não são alcançáveis no KeyHybrid.
 - **Procedência dos artefatos**: os binários e checksums de cada release recebem *build provenance* assinado pelo GitHub (`actions/attest-build-provenance`) e a imagem do GHCR passa a ser publicada com `provenance: mode=max` e SBOM.
 - **Notas de release categorizadas**: `.github/release.yml` agrupa as mudanças por área (segurança, interface, gateway, dependências, CI e documentação).
+- **OpenSSF Scorecard**: análise semanal da postura de segurança do repositório, publicada no code scanning e no painel público do Scorecard.
 
 ### Alterado
 
