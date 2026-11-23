@@ -1,0 +1,38 @@
+# Categorias usadas por `generate_release_notes` no release.yml.
+# Docs: https://docs.github.com/repos/releases/automatically-generated-release-notes
+
+changelog:
+  exclude:
+    labels:
+      - skip-changelog
+  categories:
+    - title: Segurança
+      labels:
+        - security
+    - title: Adicionado
+      labels:
+        - enhancement
+        - feature
+    - title: Corrigido
+      labels:
+        - bug
+        - fix
+    - title: Interface desktop
+      labels:
+        - desktop
+    - title: Gateway
+      labels:
+        - gateway
+    - title: Dependências
+      labels:
+        - dependencies
+    - title: CI e automação
+      labels:
+        - ci
+        - github-actions
+    - title: Documentação
+      labels:
+        - documentation
+    - title: Outras mudanças
+      labels:
+        - '*'
