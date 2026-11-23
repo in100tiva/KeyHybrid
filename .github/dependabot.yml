@@ -24,6 +24,12 @@ updates:
         patterns: ['*']
     commit-message:
       prefix: 'chore(deps-npm)'
+    # TypeScript 7 removeu a API de compilador que o SvelteKit consome
+    # (svelte.dev/e/kit/typescript_compiler_api_missing). Mantemos a linha 6.x
+    # até o SvelteKit suportar o 7.
+    ignore:
+      - dependency-name: typescript
+        update-types: ['version-update:semver-major']
 
   - package-ecosystem: cargo
     directory: /apps/desktop/src-tauri
