@@ -30,6 +30,10 @@ updates:
     ignore:
       - dependency-name: typescript
         update-types: ['version-update:semver-major']
+      # SvelteKit 3 abandonou o `svelte.config.js` (svelte.dev/e/kit/config_file_unsupported),
+      # então a migração precisa ser feita de propósito, não por bot.
+      - dependency-name: '@sveltejs/kit'
+        update-types: ['version-update:semver-major']
 
   - package-ecosystem: cargo
     directory: /apps/desktop/src-tauri
