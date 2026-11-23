@@ -1,6 +1,9 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
+  import { SERVICES, detectProvider } from "../lib/providers.ts";
+  import { importRows, khRunCommand, planImport } from "../lib/envImport.ts";
+  import type { ImportRow } from "../lib/envImport.ts";
 
   interface KeySafeView {
     id: string;
@@ -29,38 +32,11 @@
       null
   );
 
-  // Serviços (não-IA): URL base predefinida e variável sugerida para o `kh run`
-  const SERVICES: Record<string, { baseUrl: string; envVar?: string }> = {
-    vercel: { baseUrl: "https://api.vercel.com", envVar: "VERCEL_TOKEN" },
-    supabase: { baseUrl: "https://api.supabase.com", envVar: "SUPABASE_ACCESS_TOKEN" },
-    github: { baseUrl: "https://api.github.com", envVar: "GH_TOKEN" },
-    outro: { baseUrl: "" },
-  };
-
   // Grupos do seletor de provedor (popover próprio; o select nativo sai branco no WebKitGTK)
   const PROVIDER_GROUPS = [
     { label: "IA", items: ["openrouter", "gemini", "anthropic"] },
-    { label: "Serviços", items: ["vercel", "supabase", "github", "outro"] },
+    { label: "Serviços", items: ["openai", "vercel", "supabase", "github", "outro"] },
   ];
-
-  // shortcut: só prefixos conhecidos; Vercel não tem prefixo fixo, fica manual
-  const PROVIDER_PREFIXES: [string, string][] = [
-    ["sk-or-", "openrouter"],
-    ["sk-ant-", "anthropic"],
-    ["AIza", "gemini"],
-    ["sbp_", "supabase"],
-    ["ghp_", "github"],
-    ["github_pat_", "github"],
-    ["gho_", "github"],
-    ["ghu_", "github"],
-    ["ghs_", "github"],
-    ["ghr_", "github"],
-  ];
-
-  function detectProvider(secret: string): string | null {
-    const s = secret.trim();
-    return PROVIDER_PREFIXES.find(([prefix]) => s.startsWith(prefix))?.[1] ?? null;
-  }
 
   // Inputs para adicionar nova chave na barra inferior (/Key | nome | sk-...)
   let newAlias = $state("");
@@ -89,6 +65,19 @@
 
   // Modal/Flip opcional para visualizar o Card Daybridge em tela cheia
   let showDaybridgeModal = $state(false);
+
+  // Importação de .env: o texto colado é a única cópia das chaves fora do cofre;
+  // vive só na memória desta tela e some ao concluir ou cancelar
+  let importOpen = $state(false);
+  let envText = $state("");
+  let skipped = $state<string[]>([]); // linhas desmarcadas na prévia, pelo nome da variável
+  let pending = $state<ImportRow[] | null>(null); // lote em gravação; null = ainda na prévia
+  let imported = $state<ImportRow[]>([]);
+  let leftOut = $state<string[]>([]);
+  let importError = $state("");
+  let activeBefore = "";
+  let plan = $derived(planImport(envText, keys.map((k) => k.alias)));
+  let selectedRows = $derived(plan.rows.filter((r) => !skipped.includes(r.names[0])));
 
 
   function envVarFor(provider: string, alias: string): string {
@@ -275,6 +264,84 @@
     } catch (err: any) {
       showNotice(String(err));
     }
+  }
+
+  function closeImport() {
+    importOpen = false;
+    envText = "";
+    skipped = [];
+    pending = null;
+    imported = [];
+    leftOut = [];
+    importError = "";
+  }
+
+  // Texto arrastado cai no campo como sempre; arquivo é lido aqui
+  async function onEnvDrop(e: DragEvent) {
+    const file = e.dataTransfer?.files[0];
+    if (!file) return;
+    e.preventDefault();
+    // .env é texto pequeno: um arquivo errado e enorme travaria a tela ao ser lido
+    if (file.size > 64 * 1024) {
+      importError = "Arquivo grande demais para ser um .env.";
+      return;
+    }
+    importError = "";
+    envText = await file.text();
+  }
+
+  function toggleRow(name: string) {
+    skipped = skipped.includes(name) ? skipped.filter((n) => n !== name) : [...skipped, name];
+  }
+
+  async function startImport() {
+    if (isSaving) return;
+    isSaving = true; // trava o botão já no primeiro clique: a ativa de antes é lida uma vez só
+    await syncVault(); // apelidos frescos: a gravação é upsert e não pode cair em cima de outra chave
+    activeBefore = keys.find((k) => k.active && k.kind !== "service")?.id ?? "";
+    leftOut = plan.leftOut;
+    pending = selectedRows.length ? selectedRows : null; // texto apagado no meio: volta à prévia
+    isSaving = false;
+    await runImport();
+  }
+
+  // Grava pelo save_vault_key, a mesma cifra do cadastro manual. Se parar no meio,
+  // "Tentar de novo" retoma só o que faltou, com os mesmos apelidos
+  async function runImport() {
+    if (!pending || isSaving) return;
+    isSaving = true;
+    importError = "";
+    const res = await importRows(pending, envText, (row, secretKey) =>
+      invoke("save_vault_key", {
+        gatewayUrl,
+        alias: row.alias,
+        provider: row.provider,
+        secretKey,
+        defaultModel: newModel,
+        kind: row.kind,
+        baseUrl: row.baseUrl,
+      })
+    );
+    imported = [...imported, ...res.done];
+    pending = pending.slice(res.done.length);
+    // Salvar chave de IA a torna a ativa: devolve a que estava ativa antes da importação
+    if (activeBefore && res.done.some((r) => r.kind === "ai")) {
+      await invoke("activate_vault_key", { gatewayUrl, id: activeBefore }).catch(() => {
+        // a lista mostra qual ficou ativa, e um clique troca
+      });
+    }
+    importError = res.error;
+    if (!pending.length) envText = "";
+    isSaving = false;
+    await syncVault();
+  }
+
+  // Sem o drag-drop nativo do Tauri (dragDropEnabled: false, para o drop do .env funcionar),
+  // soltar um arquivo fora da área de importação abriria o arquivo na própria janela
+  function blockFileDrop(e: DragEvent) {
+    if (e.defaultPrevented || !e.dataTransfer?.types.includes("Files")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "none";
   }
 
   // Trocar provedor da nova chave (serviço preenche a URL base predefinida)
@@ -504,7 +571,7 @@
   });
 </script>
 
-<svelte:window onpointerdown={onWindowPointerDown} />
+<svelte:window onpointerdown={onWindowPointerDown} ondragover={blockFileDrop} ondrop={blockFileDrop} />
 
 <!-- FILTRO SVG DE DISTORÇÃO LÍQUIDA ESTILO MACOS GENIE -->
 <svg class="genie-svg-defs" width="0" height="0" aria-hidden="true">
@@ -627,6 +694,122 @@
       {/if}
     </section>
 
+  {:else if importOpen}
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- IMPORTAÇÃO DE .ENV: o conteúdo colado fica mascarado e só na memória -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <section class="import-stage">
+      <h2 class="import-title">Importar .env</h2>
+      <p class="import-note">
+        As chaves vão direto para o cofre cifrado, pelo mesmo caminho do cadastro manual.
+      </p>
+
+      {#if pending === null}
+        <textarea
+          class="env-drop"
+          bind:value={envText}
+          placeholder="Cole aqui o conteúdo do .env ou solte o arquivo"
+          aria-label="Conteúdo do .env (fica mascarado)"
+          spellcheck="false"
+          autocomplete="off"
+          ondragover={(e) => e.preventDefault()}
+          ondrop={onEnvDrop}
+        ></textarea>
+
+        {#if importError}
+          <p class="lock-error">{importError}</p>
+        {/if}
+
+        {#if plan.rows.length}
+          <div class="import-list">
+            {#each plan.rows as row (row.names[0])}
+              <label class="import-row">
+                <input
+                  type="checkbox"
+                  checked={!skipped.includes(row.names[0])}
+                  onchange={() => toggleRow(row.names[0])}
+                />
+                <span class="key-alias">{row.alias}</span>
+                <span class="linked-tag">
+                  {row.kind === "service" ? `serviço · ${row.provider}` : row.provider}
+                </span>
+                <span class="import-vars">{row.names.join(", ")}</span>
+                <span class="meta-text">{row.masked}</span>
+              </label>
+            {/each}
+          </div>
+        {:else if envText.trim()}
+          <p class="import-note">Nenhuma chave conhecida neste .env.</p>
+        {/if}
+
+        {#if plan.leftOut.length}
+          <p class="import-note">
+            Ficam no .env (não são chaves conhecidas): {plan.leftOut.join(", ")}
+          </p>
+        {/if}
+
+        <div class="import-actions">
+          <button class="db-back-btn" onclick={closeImport}>Cancelar</button>
+          <button
+            class="db-copy-action"
+            disabled={!selectedRows.length || isSaving}
+            onclick={startImport}
+          >
+            Importar {selectedRows.length} {selectedRows.length === 1 ? "chave" : "chaves"}
+          </button>
+        </div>
+      {:else if pending.length}
+        {#if isSaving}
+          <p class="import-note">Gravando no cofre…</p>
+        {:else}
+          <p class="lock-error">{importError}</p>
+          <p class="import-note">
+            {imported.length} de {imported.length + pending.length} gravadas. Faltam:
+            {pending.map((r) => r.alias).join(", ")}
+          </p>
+          <div class="import-actions">
+            <button class="db-back-btn" onclick={closeImport}>Cancelar</button>
+            {#if hasPinConfigured}
+              <button class="db-back-btn" onclick={openPinLockOrSetup}>Desbloquear</button>
+            {/if}
+            <button class="db-copy-action" onclick={runImport}>Tentar de novo</button>
+          </div>
+        {/if}
+      {:else}
+        <p class="import-ok">
+          ✓ {imported.length} {imported.length === 1 ? "chave importada" : "chaves importadas"}:
+          {imported.map((r) => r.alias).join(", ")}
+        </p>
+        <ul class="import-checklist">
+          {#if leftOut.length}
+            <li>
+              <label><input type="checkbox" /> Antes de apagar, guarde o que ficou de fora: {leftOut.join(", ")}</label>
+            </li>
+          {/if}
+          <li>
+            <label><input type="checkbox" /> Apague o .env e as cópias dele (backup, pasta sincronizada)</label>
+          </li>
+          <li>
+            <label>
+              <input type="checkbox" /> A chave antiga passou pelo .env: no painel de cada provedor, gere
+              uma nova, troque aqui no mesmo apelido e só então revogue a antiga
+            </label>
+          </li>
+        </ul>
+        <button
+          class="access-row {copiedItem === 'run' ? 'active-row' : ''}"
+          onclick={() => copyText("run", khRunCommand(imported))}
+        >
+          <span class="avatar-badge amber">&gt;_</span>
+          <span class="access-label">Rodar o projeto sem o .env (kh run)</span>
+          <span class="access-check">{copiedItem === "run" ? "✓" : "Copiar"}</span>
+        </button>
+        <div class="import-actions">
+          <button class="db-copy-action" onclick={closeImport}>Concluir</button>
+        </div>
+      {/if}
+    </section>
+
   {:else if showDaybridgeModal && selectedKey}
     <!-- ═══════════════════════════════════════════════════════════════════ -->
     <!-- CARD DE TOKEN VIRTUAL (FIEL À REFERÊNCIA 1 - DAYBRIDGE)            -->
@@ -719,7 +902,10 @@
             {#if keys.length === 0}
               <div class="empty-keys">
                 <span>Nenhuma chave salva.</span>
-                <small>Adicione na barra abaixo ↓</small>
+                <small>
+                  Adicione na barra abaixo ↓ ou
+                  <button class="inline-link" onclick={() => (importOpen = true)}>importe um .env</button>
+                </small>
               </div>
             {:else}
               {#each keys as k (k.id)}
@@ -952,6 +1138,10 @@
             }}
           >
             <span>+</span> Nova chave
+          </button>
+          <span class="tool-sep">|</span>
+          <button class="tool-item" onclick={() => (importOpen = true)}>
+            <span>⤓</span> Importar .env
           </button>
           <span class="tool-sep">|</span>
           <button class="tool-item" onclick={syncVault}>
@@ -2466,6 +2656,140 @@
 
   .db-back-btn:hover {
     color: #d4d4d8;
+  }
+
+  .db-copy-action:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  /* ═════════════════════════════════════════════════════════════════ */
+  /* IMPORTAÇÃO DE .ENV                                               */
+  /* ═════════════════════════════════════════════════════════════════ */
+
+  .import-stage {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 6px 22px 18px 22px;
+    overflow-y: auto;
+  }
+
+  .import-title {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    color: #fafafa;
+    letter-spacing: -0.02em;
+  }
+
+  .import-note {
+    margin: 0;
+    font-size: 11.5px;
+    color: #71717a;
+    line-height: 1.45;
+  }
+
+  /* Mascarado como o campo da chave no cadastro manual: o .env não aparece em claro na tela */
+  .env-drop {
+    min-height: 120px;
+    resize: none;
+    background: #17171a;
+    border: 1px dashed rgba(255, 255, 255, 0.14);
+    border-radius: 12px;
+    padding: 10px 12px;
+    color: #f4f4f5;
+    font-family: "SF Mono", Consolas, monospace;
+    font-size: 11.5px;
+    outline: none;
+    -webkit-text-security: disc;
+  }
+
+  .env-drop:focus {
+    border-color: rgba(163, 230, 53, 0.35);
+  }
+
+  .env-drop::placeholder {
+    color: #52525b;
+  }
+
+  .import-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    background: #17171a;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 12px;
+    padding: 8px;
+  }
+
+  .import-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 6px;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+
+  .import-row:hover {
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  .import-vars {
+    flex: 1;
+    min-width: 0;
+    color: #52525b;
+    font-size: 10.5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .import-ok {
+    margin: 0;
+    font-size: 12px;
+    color: #a3e635;
+    line-height: 1.45;
+  }
+
+  .import-checklist {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 11.5px;
+    color: #d4d4d8;
+    line-height: 1.45;
+  }
+
+  .import-checklist label {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    cursor: pointer;
+  }
+
+  .import-row input,
+  .import-checklist input {
+    margin: 0;
+    accent-color: #84cc16;
+    flex-shrink: 0;
+  }
+
+  .import-checklist input {
+    margin-top: 2px;
+  }
+
+  .import-actions {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 12px;
+    margin-top: auto;
   }
 
 
