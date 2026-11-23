@@ -24,15 +24,11 @@ updates:
         patterns: ['*']
     commit-message:
       prefix: 'chore(deps-npm)'
-    # TypeScript 7 removeu a API de compilador que o SvelteKit consome
-    # (svelte.dev/e/kit/typescript_compiler_api_missing). Mantemos a linha 6.x
-    # até o SvelteKit suportar o 7.
+    # TypeScript 7 saiu do intervalo de peer do SvelteKit 3 (`^6.0.0`) e removeu
+    # a API de compilador que o kit consome (svelte.dev/e/kit/typescript_compiler_api_missing).
+    # Mantemos a linha 6.x até o SvelteKit suportar o 7.
     ignore:
       - dependency-name: typescript
-        update-types: ['version-update:semver-major']
-      # SvelteKit 3 abandonou o `svelte.config.js` (svelte.dev/e/kit/config_file_unsupported),
-      # então a migração precisa ser feita de propósito, não por bot.
-      - dependency-name: '@sveltejs/kit'
         update-types: ['version-update:semver-major']
 
   - package-ecosystem: cargo
