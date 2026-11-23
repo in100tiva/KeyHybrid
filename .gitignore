@@ -4,9 +4,7 @@ pb_data/
 *.db
 *.db-shm
 *.db-wal
-.xiaomi_token
-**/.xiaomi_token
-.master.key
+**/.master.key
 .master.key.wrapped
 __pycache__/
 *.pyc
