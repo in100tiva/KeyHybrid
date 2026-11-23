@@ -1,14 +1,19 @@
 mod gateway;
+mod server_bin;
 mod vault;
 
 use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::OnceLock;
 use std::time::Duration;
 use tauri::Manager;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
+
+/// Diretório de recursos empacotados do instalador.
+static RESOURCE_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 pub fn ensure_gateway_running() {
     let addr = "127.0.0.1:8090".parse().unwrap();
@@ -16,12 +21,7 @@ pub fn ensure_gateway_running() {
         return;
     }
 
-    let bin_name = if cfg!(target_os = "windows") {
-        "keyhybrid-server.exe"
-    } else {
-        "keyhybrid-server"
-    };
-
+    let bin_name = server_bin::bin_name();
     let cwd = std::env::current_dir().unwrap_or_default();
     let exe_dir = std::env::current_exe()
         .ok()
@@ -32,32 +32,27 @@ pub fn ensure_gateway_running() {
         .map(PathBuf::from)
         .unwrap_or_default();
 
-    let candidates = [
-        exe_dir.join(bin_name),
-        exe_dir.join("server").join(bin_name),
-        cwd.join(bin_name),
-        cwd.join("apps").join("server").join(bin_name),
-        cwd.join("..").join("server").join(bin_name),
-        cwd.join("..").join("..").join("server").join(bin_name),
-        home_dir.join(".keyhybrid").join("bin").join(bin_name),
-    ];
+    let candidates = server_bin::candidates(
+        bin_name,
+        &exe_dir,
+        &cwd,
+        &home_dir,
+        RESOURCE_DIR.get().map(PathBuf::as_path),
+    );
 
-    for bin_path in candidates {
-        if bin_path.exists()
-            && let Some(parent) = bin_path.parent()
+    if let Some(bin_path) = server_bin::first_existing(&candidates)
+        && let Some(parent) = bin_path.parent()
+    {
+        let mut cmd = Command::new(&bin_path);
+        cmd.arg("serve")
+            .arg("--http=127.0.0.1:8090")
+            .current_dir(parent);
+        #[cfg(target_os = "windows")]
         {
-            let mut cmd = Command::new(&bin_path);
-            cmd.arg("serve")
-                .arg("--http=127.0.0.1:8090")
-                .current_dir(parent);
-            #[cfg(target_os = "windows")]
-            {
-                const CREATE_NO_WINDOW: u32 = 0x08000000;
-                cmd.creation_flags(CREATE_NO_WINDOW);
-            }
-            let _ = cmd.spawn();
-            break;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
         }
+        let _ = cmd.spawn();
     }
 }
 
@@ -85,6 +80,10 @@ pub fn run() {
             if let Some(main_win) = app.get_webview_window("main") {
                 let _ = main_win.set_decorations(false);
                 let _ = main_win.set_shadow(false);
+            }
+
+            if let Ok(dir) = app.path().resource_dir() {
+                let _ = RESOURCE_DIR.set(dir);
             }
 
             // Garantir que o servidor Gateway em Go esteja rodando automaticamente

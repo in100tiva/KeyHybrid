@@ -75,7 +75,7 @@ flowchart LR
 | --- | --- |
 | **Binários do gateway** (Linux amd64/arm64, macOS amd64/arm64, Windows amd64) | [Releases](https://github.com/in100tiva/KeyHybrid/releases) — inclui `SHA256SUMS.txt` |
 | **Imagem de container** (multi-arquitetura) | [`ghcr.io/in100tiva/keyhybrid`](https://github.com/in100tiva/KeyHybrid/pkgs/container/keyhybrid) |
-| **App desktop** (`.deb`, `.msi`) | [Build a partir do código](docs/INSTALL.md) por enquanto — instaladores entram nas próximas releases |
+| **App desktop** (`.deb`, `.msi`, `-setup.exe`) | [Releases](https://github.com/in100tiva/KeyHybrid/releases) — passo a passo em [docs/INSTALL.md](docs/INSTALL.md#-instalar-pelo-instalador-recomendado) |
 
 Verificar a integridade de um download:
 

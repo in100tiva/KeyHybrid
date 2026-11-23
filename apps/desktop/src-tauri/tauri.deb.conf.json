@@ -1,0 +1,12 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "mainBinaryName": "keyhybrid",
+  "build": {
+    "beforeBuildCommand": "pnpm run build:server:unix && pnpm run build"
+  },
+  "bundle": {
+    "resources": {
+      "../../server/keyhybrid-server": "server/keyhybrid-server"
+    }
+  }
+}

@@ -2,6 +2,57 @@
 
 Guia completo para Linux e Windows. Para a visão geral do projeto, volte ao [README](../README.md).
 
+## 📦 Instalar pelo instalador (recomendado)
+
+Baixe o instalador da última versão em [**Releases**](https://github.com/in100tiva/KeyHybrid/releases) (o gateway `keyhybrid-server` já vem embutido):
+
+| Arquivo | Sistema | Observações |
+| --- | --- | --- |
+| `KeyHybrid_<versão>_amd64.deb` | Ubuntu 22.04+ / Debian 12+ (`amd64`) | Instala o app e o gateway em `/usr/lib/KeyHybrid/server/` |
+| `KeyHybrid_<versão>_x64-setup.exe` | Windows 10 / 11 (`x64`) | Instalador NSIS (recomendado para atualizar: encerra o gateway sozinho) |
+| `KeyHybrid_<versão>_x64_en-US.msi` | Windows 10 / 11 (`x64`) | Pacote MSI para implantação corporativa |
+
+Tags de pré-release (ex.: `v0.3.0-rc.1`) publicam só os binários do gateway: o `.msi` exige versão `X.Y.Z`.
+
+### Conferir integridade e procedência
+
+No Linux, valide o hash com `SHA256SUMS.txt` e a atestação de build do GitHub:
+
+```bash
+sha256sum -c SHA256SUMS.txt --ignore-missing
+gh attestation verify KeyHybrid_<versão>_amd64.deb --repo in100tiva/KeyHybrid
+```
+
+No Windows (PowerShell), confira o hash SHA-256 e compare com a linha correspondente do `SHA256SUMS.txt`:
+
+```powershell
+Get-FileHash .\KeyHybrid_<versão>_x64_en-US.msi -Algorithm SHA256
+```
+
+### Linux (`.deb`)
+
+```bash
+sudo apt install ./KeyHybrid_<versão>_amd64.deb
+```
+
+Abra **KeyHybrid** pelo menu de aplicativos. O gateway sobe sozinho em `127.0.0.1:8090` e o cofre é gravado em `~/.keyhybrid/pb_data`. Para desinstalar (o nome do pacote Debian é `key-hybrid`):
+
+```bash
+sudo apt remove key-hybrid
+```
+
+### Windows (`.msi` e `-setup.exe`)
+
+- Os instaladores ainda não possuem assinatura Authenticode: se o **SmartScreen** exibir um aviso, clique em **Mais informações** → **Executar assim mesmo**.
+- O instalador `KeyHybrid_<versão>_x64-setup.exe` (NSIS) é o recomendado para instalar e atualizar, pois encerra o `keyhybrid-server.exe` automaticamente antes de substituir os arquivos.
+- Se usar o `.msi`, antes de atualizar ou desinstalar, feche o app e encerre o gateway em execução:
+
+```powershell
+taskkill /F /IM keyhybrid-server.exe
+```
+
+As seções abaixo são para quem deseja compilar o KeyHybrid a partir do código-fonte.
+
 ## 🐧 Linux
 
 ### 1. Pré-requisitos
