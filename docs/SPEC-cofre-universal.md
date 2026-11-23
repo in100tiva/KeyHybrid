@@ -13,7 +13,7 @@ de IA, e tem quatro furos:
 |---|---|---|---|
 | F1 | CORS `*` e nenhuma autenticação | `main.go:227-236` | qualquer site aberto no navegador chama `127.0.0.1:8090`: gasta a OpenRouter, troca e apaga chaves |
 | F2 | Sem checagem de `Host` | mesmo ponto | DNS rebinding contorna até um CORS correto |
-| F3 | Toda chave é tratada como IA | `main.go:425-466`, `571-605`, `friday/assist` | chave do Supabase cadastrada vira "openrouter" e é enviada como `Bearer` para `openrouter.ai` |
+| F3 | Toda chave é tratada como IA | `main.go:425-466`, `571-605` | chave do Supabase cadastrada vira "openrouter" e é enviada como `Bearer` para `openrouter.ai` |
 | F4 | Nenhum jeito de usar chave fora de IA sem copiá-la | — | o usuário cola a chave no terminal, que é exatamente a dor |
 
 ## 2. Modelo de ameaça (o que protegemos e o que não)
@@ -30,7 +30,7 @@ Campo novo `kind` na coleção `vault_keys`:
 
 | kind | Uso | Rotas que a usam |
 |---|---|---|
-| `ai` (padrão; vazio = `ai`) | OpenRouter, Gemini, Anthropic — como hoje | `/v1/*`, `/api/ai/proxy/chat`, Sexta-Feira |
+| `ai` (padrão; vazio = `ai`) | OpenRouter, Gemini, Anthropic — como hoje | `/v1/*`, `/api/ai/proxy/chat` |
 | `service` | qualquer API: Vercel, Supabase, GitHub, outra | `/proxy/{alias}/…` e `kh run` |
 
 Campos novos: `kind`, `auth_header` (padrão `Authorization`), `auth_prefix` (padrão `Bearer `).
@@ -53,7 +53,7 @@ Regras de cadastro (`POST /api/keyhybrid/keys`) para `service`:
   - `Access-Control-Allow-Origin` devolve **a origem permitida**, nunca `*`; `Vary: Origin`;
     `Allow-Headers` inclui `X-KeyHybrid-Token`.
 - **C2 (F3)** — toda busca de chave para IA (`proxyChatHandler`, `resolveVaultSecret`,
-  `friday/assist`, auto-ativação do `GET /keys`) só enxerga `kind != "service"`.
+  auto-ativação do `GET /keys`) só enxerga `kind != "service"`.
   `POST /keys/{id}/activate` recusa chave de serviço (`400`).
 - **C3** — `GET /keys` devolve também `kind`, `base_url` e `auth_header` (nada disso é
   segredo); `virtual_token` fica vazio para `service`.
