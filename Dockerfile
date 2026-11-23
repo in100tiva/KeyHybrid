@@ -18,7 +18,7 @@ RUN go build -trimpath -buildvcs=false \
       -o /out/keyhybrid-server .
 
 # ── Runtime ──────────────────────────────────────────────────────────────────
-FROM alpine:3.21
+FROM alpine:3.24
 
 RUN apk add --no-cache ca-certificates tzdata \
  && addgroup -g 10001 -S keyhybrid \
