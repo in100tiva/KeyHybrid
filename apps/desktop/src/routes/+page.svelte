@@ -90,22 +90,6 @@
   // Modal/Flip opcional para visualizar o Card Daybridge em tela cheia
   let showDaybridgeModal = $state(false);
 
-  // Estado da Assistente Padrão "Sexta-Feira" (F.R.I.D.A.Y. + Lâmpada Xiaomi)
-  // Regra: Só pode ser ativada/desativada após o usuário ter uma chave da OpenRouter cadastrada
-  let hasOpenRouterKey = $derived(
-    keys.some((k) => k.provider === "openrouter" || k.active)
-  );
-  let fridayEnabled = $state(false);
-  let fridaySpeaking = $state(false);
-  let fridayListening = $state(false);
-  let fridayProcessing = $state(false);
-  let fridayCommand = $state("");
-  let fridayLastReply = $state("");
-  let xiaomiBulbIp = $state("192.168.100.22");
-  let dockMode = $state<"key" | "friday">("key");
-  let recognitionRef: any = null;
-  let currentAudio: HTMLAudioElement | null = null;
-  let lastFridayEventId = 0;
 
   function envVarFor(provider: string, alias: string): string {
     const preset = SERVICES[provider]?.envVar;
@@ -482,223 +466,6 @@
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // ASSISTENTE PADRÃO: SEXTA-FEIRA (F.R.I.D.A.Y. + LÂMPADA INTELIGENTE XIAOMI)
-  // ═══════════════════════════════════════════════════════════════════════════
-  function playFridayAudio(base64Mp3: string) {
-    if (!base64Mp3) return;
-    try {
-      if (currentAudio) {
-        currentAudio.pause();
-        currentAudio = null;
-      }
-      const audio = new Audio(`data:audio/mp3;base64,${base64Mp3}`);
-      currentAudio = audio;
-      fridaySpeaking = true;
-      audio.onended = () => {
-        fridaySpeaking = false;
-      };
-      audio.onerror = () => {
-        fridaySpeaking = false;
-      };
-      audio.play().catch(() => {
-        fridaySpeaking = false;
-      });
-    } catch {
-      fridaySpeaking = false;
-    }
-  }
-
-  function startFridayWakeListener() {
-    const SpeechRec =
-      (window as any).SpeechRecognition ||
-      (window as any).webkitSpeechRecognition;
-    if (!SpeechRec) return;
-
-    try {
-      if (recognitionRef) {
-        recognitionRef.stop();
-      }
-      const rec = new SpeechRec();
-      rec.lang = "pt-BR";
-      rec.continuous = true;
-      rec.interimResults = false;
-
-      rec.onstart = () => {
-        fridayListening = true;
-      };
-
-      rec.onresult = (event: any) => {
-        const lastIdx = event.results.length - 1;
-        const transcript = String(
-          event.results[lastIdx][0].transcript || ""
-        ).trim();
-        if (!transcript) return;
-
-        const norm = transcript
-          .toLowerCase()
-          .normalize("NFD")
-          .replace(/[\u0300-\u036f]/g, "");
-
-        // Atende quando o usuário chama por "Sexta-feira" / "Sexta feira"
-        if (norm.includes("sexta-feira") || norm.includes("sexta feira") || norm.includes("sextafeira")) {
-          fridayCommand = transcript;
-          sendFridayCommand(transcript);
-        }
-      };
-
-      rec.onerror = () => {
-        fridayListening = false;
-      };
-
-      rec.onend = () => {
-        fridayListening = false;
-        if (fridayEnabled && hasOpenRouterKey) {
-          setTimeout(() => {
-            try {
-              rec.start();
-            } catch {}
-          }, 600);
-        }
-      };
-
-      recognitionRef = rec;
-      rec.start();
-    } catch {
-      fridayListening = false;
-    }
-  }
-
-  function stopFridayWakeListener() {
-    fridayListening = false;
-    if (recognitionRef) {
-      try {
-        recognitionRef.onend = null;
-        recognitionRef.stop();
-      } catch {}
-      recognitionRef = null;
-    }
-  }
-
-  async function toggleFriday() {
-    if (!hasOpenRouterKey) {
-      showNotice("Adicione sua chave OpenRouter para ativar a Sexta-Feira.");
-      return;
-    }
-
-    fridayEnabled = !fridayEnabled;
-    try {
-      await fetch(`${gatewayUrl}/api/keyhybrid/friday/state`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled: fridayEnabled }),
-      });
-    } catch {}
-    if (fridayEnabled) {
-      dockMode = "friday";
-      fridayListening = true;
-      showNotice("Sexta-Feira ativada! Diga 'Sexta-feira...'");
-      startFridayWakeListener();
-      try {
-        const resp = await fetch(`${gatewayUrl}/api/keyhybrid/friday/assist`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ greeting: true, bulb_ip: xiaomiBulbIp }),
-        });
-        if (resp.ok) {
-          const data = await resp.json();
-          fridayLastReply = data.reply || "";
-          if (data.audio_base64) {
-            playFridayAudio(data.audio_base64);
-          }
-        }
-      } catch {}
-    } else {
-      dockMode = "key";
-      stopFridayWakeListener();
-      if (currentAudio) {
-        currentAudio.pause();
-        fridaySpeaking = false;
-      }
-      showNotice("Sexta-Feira desativada.");
-    }
-  }
-
-  async function pollFridayVoiceEvents() {
-    if (!hasOpenRouterKey) return;
-    try {
-      const resp = await fetch(`${gatewayUrl}/api/keyhybrid/friday/state`);
-      if (!resp.ok) return;
-      const st = await resp.json();
-      if (typeof st.enabled === "boolean") {
-        fridayEnabled = st.enabled;
-        fridayListening = st.enabled;
-      }
-      const ev = st.event;
-      if (ev && ev.event_id && ev.event_id > lastFridayEventId) {
-        if (lastFridayEventId !== 0) {
-          fridayLastReply = ev.reply || "";
-          showNotice(`🎙️ "${ev.text}" ➔ ${ev.reply}`);
-          fridaySpeaking = true;
-          setTimeout(() => {
-            fridaySpeaking = false;
-          }, 3600);
-        }
-        lastFridayEventId = ev.event_id;
-      }
-    } catch {}
-  }
-
-  async function sendFridayCommand(overrideText?: string) {
-    if (!hasOpenRouterKey) {
-      showNotice("Requer chave da OpenRouter no cofre.");
-      return;
-    }
-    const text = (overrideText ?? fridayCommand).trim();
-    if (!text || fridayProcessing) return;
-
-    fridayProcessing = true;
-    showNotice("Sexta-Feira processando...");
-    try {
-      const resp = await fetch(`${gatewayUrl}/api/keyhybrid/friday/assist`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text,
-          bulb_ip: xiaomiBulbIp.trim(),
-        }),
-      });
-      if (!resp.ok) {
-        const errTxt = await resp.text();
-        throw new Error(errTxt);
-      }
-      const data = await resp.json();
-      if (data.event_id) {
-        lastFridayEventId = data.event_id;
-      }
-      fridayLastReply = data.reply || "";
-      if (data.bulb_ip && !xiaomiBulbIp) {
-        xiaomiBulbIp = data.bulb_ip;
-      }
-      if (data.audio_base64) {
-        playFridayAudio(data.audio_base64);
-      }
-      fridayCommand = "";
-      showNotice(data.reply || "Comando concluído.");
-    } catch (err: any) {
-      showNotice(`Erro Sexta-Feira: ${err.message || err}`);
-    } finally {
-      fridayProcessing = false;
-    }
-  }
-
-  $effect(() => {
-    if (!hasOpenRouterKey && fridayEnabled) {
-      fridayEnabled = false;
-      dockMode = "key";
-      stopFridayWakeListener();
-    }
-  });
 
   onMount(() => {
     syncVault();
@@ -728,11 +495,9 @@
     document.addEventListener("visibilitychange", handleRestore);
 
     const timer = setInterval(syncVault, 6000);
-    const voiceTimer = setInterval(pollFridayVoiceEvents, 650);
     return () => {
       clearTimeout(tOpen);
       clearInterval(timer);
-      clearInterval(voiceTimer);
       window.removeEventListener("focus", handleRestore);
       document.removeEventListener("visibilitychange", handleRestore);
     };
@@ -912,7 +677,7 @@
       <div class="hero-header" onmousedown={startDrag}>
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <div
-          class="orbital-squircle {fridaySpeaking ? 'friday-speaking' : fridayEnabled ? 'friday-online' : ''}"
+          class="orbital-squircle"
           title="Clique para rever a animação de abertura da Constelação + Genie"
           onclick={() => {
             appStage = "splash-constellation";
@@ -934,11 +699,7 @@
 
         <h1 class="main-title">KeyHybrid</h1>
         <p class="main-subtitle">
-          {#if fridayEnabled}
-            {fridayLastReply || "Sexta-Feira na escuta — diga \"Sexta-feira, acende a luz\" ou use a barra abaixo"}
-          {:else}
-            Armazene suas chaves e use qualquer modelo no terminal ou Antigravity sem expor credenciais
-          {/if}
+          Armazene suas chaves e use qualquer modelo no terminal ou Antigravity sem expor credenciais
         </p>
       </div>
 
@@ -1170,32 +931,6 @@
           {/if}
         </div>
 
-        <button
-          class="config-pill {fridayEnabled ? 'friday-pill-active' : ''} {!hasOpenRouterKey ? 'friday-pill-locked' : ''}"
-          onclick={toggleFriday}
-          disabled={!hasOpenRouterKey}
-          title={hasOpenRouterKey
-            ? "Ativar/Desativar Assistente de Voz Sexta-Feira (F.R.I.D.A.Y.)"
-            : "Salve uma chave da OpenRouter primeiro para ativar a Sexta-Feira"}
-        >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-            <line x1="12" y1="19" x2="12" y2="23" />
-          </svg>
-          <span>Sexta-Feira</span>
-          <small>
-            {#if !hasOpenRouterKey}
-              bloqueada
-            {:else if fridaySpeaking}
-              falando...
-            {:else if fridayEnabled}
-              ativa
-            {:else}
-              off
-            {/if}
-          </small>
-        </button>
 
         <button class="config-pill" onclick={openPinLockOrSetup} title="Bloquear ou configurar PIN de 6 dígitos">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1211,26 +946,13 @@
       <div class="bottom-dock-container">
         <div class="dock-toolbar">
           <button
-            class="tool-item {dockMode === 'key' ? 'active-tool' : ''}"
+            class="tool-item active-tool"
             onclick={() => {
-              dockMode = "key";
               setTimeout(() => aliasInputEl?.focus(), 40);
             }}
           >
             <span>+</span> Nova chave
           </button>
-          {#if hasOpenRouterKey}
-            <span class="tool-sep">|</span>
-            <button
-              class="tool-item {dockMode === 'friday' ? 'active-tool' : ''}"
-              onclick={() => {
-                dockMode = "friday";
-                if (!fridayEnabled) toggleFriday();
-              }}
-            >
-              <span>🎙️</span> Sexta-Feira {fridayListening ? "• ouvindo" : ""}
-            </button>
-          {/if}
           <span class="tool-sep">|</span>
           <button class="tool-item" onclick={syncVault}>
             <span>⟳</span> Sincronizar
@@ -1246,99 +968,60 @@
           {/if}
         </div>
 
-        {#if dockMode === "friday" && hasOpenRouterKey}
-          <div class="dock-input-bar">
-            <div class="lime-orb {fridaySpeaking ? 'speaking-orb' : ''}"></div>
+        <div class="dock-input-bar">
+          <div class="lime-orb"></div>
 
-            <span class="cmd-prefix">/F.R.I.D.A.Y</span>
-            <span class="cmd-pipe">|</span>
+          <span class="cmd-prefix">/Key</span>
+          <span class="cmd-pipe">|</span>
 
-            <input
-              type="text"
-              class="input-alias"
-              placeholder="IP Xiaomi (opcional)"
-              bind:value={xiaomiBulbIp}
-              title="IP local da lâmpada Xiaomi (ex: 192.168.100.55) com Controle de LAN ativo"
-            />
+          <input
+            bind:this={aliasInputEl}
+            type="text"
+            class="input-alias"
+            placeholder="nome (ex: padrao)"
+            bind:value={newAlias}
+            onkeydown={(e) => {
+              if (e.key === "Enter") handleSaveKey();
+            }}
+          />
 
+          <input
+            type="password"
+            class="input-secret"
+            placeholder={isServiceProvider ? "cole o token" : "cole a chave sk-or-v1-..."}
+            bind:value={newSecret}
+            onpaste={onSecretPaste}
+            onkeydown={(e) => {
+              if (e.key === "Enter") handleSaveKey();
+            }}
+          />
+
+          <button
+            class="dock-send-btn"
+            onclick={handleSaveKey}
+            disabled={isSaving || (!newAlias.trim() && !newSecret.trim())}
+            title="Salvar chave no Cofre"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </button>
+        </div>
+
+        {#if isServiceProvider}
+          <div class="dock-url-row">
+            <span class="dock-url-label">URL base</span>
             <input
               type="text"
               class="input-secret"
-              placeholder="Diga &quot;Sexta-feira, acende a luz&quot; ou digite aqui..."
-              bind:value={fridayCommand}
-              onkeydown={(e) => {
-                if (e.key === "Enter") sendFridayCommand();
-              }}
-            />
-
-            <button
-              class="dock-send-btn"
-              onclick={() => sendFridayCommand()}
-              disabled={fridayProcessing || !fridayCommand.trim()}
-              title="Enviar comando para a Sexta-Feira"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <line x1="22" y1="2" x2="11" y2="13"></line>
-                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-              </svg>
-            </button>
-          </div>
-        {:else}
-          <div class="dock-input-bar">
-            <div class="lime-orb"></div>
-
-            <span class="cmd-prefix">/Key</span>
-            <span class="cmd-pipe">|</span>
-
-            <input
-              bind:this={aliasInputEl}
-              type="text"
-              class="input-alias"
-              placeholder="nome (ex: padrao)"
-              bind:value={newAlias}
+              placeholder="https://api.exemplo.com"
+              bind:value={newBaseUrl}
               onkeydown={(e) => {
                 if (e.key === "Enter") handleSaveKey();
               }}
             />
-
-            <input
-              type="password"
-              class="input-secret"
-              placeholder={isServiceProvider ? "cole o token" : "cole a chave sk-or-v1-..."}
-              bind:value={newSecret}
-              onpaste={onSecretPaste}
-              onkeydown={(e) => {
-                if (e.key === "Enter") handleSaveKey();
-              }}
-            />
-
-            <button
-              class="dock-send-btn"
-              onclick={handleSaveKey}
-              disabled={isSaving || (!newAlias.trim() && !newSecret.trim())}
-              title="Salvar chave no Cofre"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <line x1="22" y1="2" x2="11" y2="13"></line>
-                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-              </svg>
-            </button>
           </div>
-
-          {#if isServiceProvider}
-            <div class="dock-url-row">
-              <span class="dock-url-label">URL base</span>
-              <input
-                type="text"
-                class="input-secret"
-                placeholder="https://api.exemplo.com"
-                bind:value={newBaseUrl}
-                onkeydown={(e) => {
-                  if (e.key === "Enter") handleSaveKey();
-                }}
-              />
-            </div>
-          {/if}
         {/if}
       </div>
     </section>
@@ -2785,68 +2468,10 @@
     color: #d4d4d8;
   }
 
-  /* ESTILOS DA ASSISTENTE SEXTA-FEIRA (F.R.I.D.A.Y.) */
-  .friday-pill-active {
-    border-color: rgba(163, 230, 53, 0.45) !important;
-    background: rgba(163, 230, 53, 0.09) !important;
-    color: #ecfccb !important;
-  }
-
-  .friday-pill-active small {
-    color: #a3e635 !important;
-    font-weight: 600;
-  }
-
-  .friday-pill-locked {
-    opacity: 0.42;
-    cursor: not-allowed !important;
-  }
-
-  .orbital-squircle.friday-online {
-    box-shadow:
-      0 14px 28px rgba(0, 0, 0, 0.75),
-      0 0 18px rgba(163, 230, 53, 0.22),
-      inset 0 1px 1px rgba(255, 255, 255, 0.14);
-  }
-
-  .orbital-squircle.friday-speaking {
-    animation: fridayPulse 0.9s ease-in-out infinite alternate;
-  }
-
-  @keyframes fridayPulse {
-    0% {
-      transform: scale(1);
-      box-shadow:
-        0 14px 28px rgba(0, 0, 0, 0.75),
-        0 0 16px rgba(56, 189, 248, 0.35),
-        inset 0 1px 1px rgba(255, 255, 255, 0.2);
-    }
-    100% {
-      transform: scale(1.06);
-      box-shadow:
-        0 14px 32px rgba(0, 0, 0, 0.8),
-        0 0 28px rgba(163, 230, 53, 0.55),
-        inset 0 1px 2px rgba(255, 255, 255, 0.35);
-    }
-  }
 
   .tool-item.active-tool {
     color: #e4e4e7;
     font-weight: 500;
   }
 
-  .speaking-orb {
-    animation: orbTalk 0.6s ease-in-out infinite alternate;
-  }
-
-  @keyframes orbTalk {
-    from {
-      transform: scale(0.95);
-      filter: brightness(1);
-    }
-    to {
-      transform: scale(1.18);
-      filter: brightness(1.35);
-    }
-  }
 </style>
