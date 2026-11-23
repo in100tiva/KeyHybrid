@@ -79,6 +79,9 @@ jobs:
       - name: svelte-check
         run: pnpm run check
 
+      - name: Testes
+        run: pnpm run test
+
       - name: Build estático
         run: pnpm run build
 

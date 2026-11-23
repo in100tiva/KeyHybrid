@@ -16,6 +16,7 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o 
 - **OpenSSF Scorecard**: análise semanal da postura de segurança do repositório, publicada no code scanning e no painel público do Scorecard.
 - **Bundle de procedência no release**: cada release passa a anexar `provenance.intoto.jsonl` com a atestação de build gerada pelo GitHub, permitindo conferir a origem dos binários com `gh attestation verify --bundle provenance.intoto.jsonl --repo in100tiva/KeyHybrid`.
 - **Importar `.env` para o cofre** ([#18](https://github.com/in100tiva/KeyHybrid/issues/18)): **Importar .env** no dock (e no estado vazio da lista) abre uma área mascarada onde se cola o conteúdo ou se solta o arquivo. As chaves conhecidas (`OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`/`GOOGLE_API_KEY`, `OPENAI_API_KEY`, `GITHUB_TOKEN`/`GH_TOKEN`, `SUPABASE_ACCESS_TOKEN`, `VERCEL_TOKEN`) aparecem numa prévia com provedor, apelido e os 4 últimos caracteres e são gravadas pelo mesmo `save_vault_key` do cadastro manual (AES-256-GCM no gateway). O prefixo da chave vence o nome da variável, a importação nunca sobrescreve um apelido existente e devolve a chave ativa de antes; no fim, uma checklist (apagar o `.env`, girar as chaves) e o comando `kh run` para rodar o projeto sem o arquivo.
+- **Testes da interface**: `pnpm run test` em `apps/desktop` (`node --test`, sem dependência nova), também no CI e no `make test`.
 
 ### Alterado
 
