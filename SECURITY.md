@@ -55,6 +55,10 @@ Dois alertas do Dependabot seguem abertos de forma **consciente**: em ambos não
 
 Se você encontrar um caminho de exploração real para qualquer um dos dois, trate como vulnerabilidade e siga o [canal privado](#como-reportar-uma-vulnerabilidade).
 
+### Avisos de crate sem manutenção (informativos)
+
+O RUSTSEC também sinaliza crates **sem mantenedor ativo** que entram de forma transitiva pelo stack GTK/WebKit do Tauri: `chrono`, `proc-macro-error`, `zbus_names`, `zvariant` e `zvariant_derive`. Não existe versão corrigida publicada — são avisos de manutenção, não falhas exploráveis descritas. Eles continuam visíveis no `cargo audit`/OSV e serão resolvidos quando o Tauri migrar para a próxima geração do `gtk-rs`; até lá o Dependabot mantém o restante do lockfile atualizado.
+
 ## Verificação de artefatos
 
 Os binários em [Releases](https://github.com/in100tiva/KeyHybrid/releases) e as imagens no GHCR são produzidos pelos workflows deste repositório e cada release publica `SHA256SUMS.txt`.
