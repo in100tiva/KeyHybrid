@@ -55,6 +55,23 @@ Dois alertas do Dependabot seguem abertos de forma **consciente**: em ambos não
 
 Se você encontrar um caminho de exploração real para qualquer um dos dois, trate como vulnerabilidade e siga o [canal privado](#como-reportar-uma-vulnerabilidade).
 
+## Verificação de artefatos
+
+Os binários em [Releases](https://github.com/in100tiva/KeyHybrid/releases) e as imagens no GHCR são produzidos pelos workflows deste repositório e cada release publica `SHA256SUMS.txt`.
+
+A partir da próxima release, os binários e o checksum recebem uma *attestation* de procedência (build provenance) assinada pelo GitHub Actions. Para verificar:
+
+```bash
+gh attestation verify keyhybrid-server-linux-amd64 --repo in100tiva/KeyHybrid
+gh attestation verify oci://ghcr.io/in100tiva/keyhybrid:latest --repo in100tiva/KeyHybrid
+```
+
+O resultado mostra commit, workflow e runner que geraram o artefato. Para conferir a integridade do download:
+
+```bash
+sha256sum -c SHA256SUMS.txt
+```
+
 ## Nosso compromisso
 
 | Etapa | Prazo alvo |

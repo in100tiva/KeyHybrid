@@ -11,6 +11,8 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o 
 - **CI do desktop em Rust**: job `Desktop Rust (Tauri)` no `.github/workflows/ci.yml`, com `cargo fmt --all -- --check` e `cargo clippy --all-targets --locked -- -D warnings` no `ubuntu-latest`, bibliotecas do Tauri v2 (WebKitGTK 4.1) e cache do Cargo.
 - **Revisão de dependências**: `.github/workflows/dependency-review.yml` comenta no PR e bloqueia merges que introduzam dependências com severidade alta.
 - **Política de segurança**: seção sobre os dois advisories sem correção upstream (`glib` e `disintegration/imaging`) e por que eles não são alcançáveis no KeyHybrid.
+- **Procedência dos artefatos**: os binários e checksums de cada release recebem *build provenance* assinado pelo GitHub (`actions/attest-build-provenance`) e a imagem do GHCR passa a ser publicada com `provenance: mode=max` e SBOM.
+- **Notas de release categorizadas**: `.github/release.yml` agrupa as mudanças por área (segurança, interface, gateway, dependências, CI e documentação).
 
 ### Alterado
 

@@ -159,8 +159,9 @@ Guia completo em **[docs/INSTALL.md](docs/INSTALL.md)**.
 | --- | --- |
 | CI (Go + Rust + SvelteKit) | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — `gofmt`, `go vet`, `go build`, `go test -race`, `svelte-check`, build estático, `cargo fmt --check` e `cargo clippy -D warnings` |
 | Revisão de dependências | [`.github/workflows/dependency-review.yml`](.github/workflows/dependency-review.yml) — barra PRs que adicionam dependências com severidade alta |
-| Releases automatizadas | [`.github/workflows/release.yml`](.github/workflows/release.yml) — binários cross-compiled + checksums por tag `v*` |
-| Imagem de container | [`.github/workflows/container.yml`](.github/workflows/container.yml) — multi-arquitetura publicada no GHCR |
+| Releases automatizadas | [`.github/workflows/release.yml`](.github/workflows/release.yml) — binários cross-compiled, checksums e notas de release categorizadas por tag `v*` |
+| Procedência dos artefatos | Build provenance assinado pelo GitHub (`actions/attest-build-provenance`) em cada binário e checksum — ver [SECURITY.md](SECURITY.md#verificação-de-artefatos) |
+| Imagem de container | [`.github/workflows/container.yml`](.github/workflows/container.yml) — multi-arquitetura no GHCR com SBOM e procedência máxima |
 | Análise estática | [CodeQL](https://github.com/in100tiva/KeyHybrid/security/code-scanning) (Go e JavaScript/TypeScript) |
 | Dependências | Dependabot semanal para Go, npm, Cargo, Actions e Docker |
 | Segurança do repositório | Secret scanning com push protection, Dependabot alerts e [política de segurança](SECURITY.md) |
