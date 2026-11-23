@@ -66,7 +66,14 @@ gh attestation verify keyhybrid-server-linux-amd64 --repo in100tiva/KeyHybrid
 gh attestation verify oci://ghcr.io/in100tiva/keyhybrid:latest --repo in100tiva/KeyHybrid
 ```
 
-O resultado mostra commit, workflow e runner que geraram o artefato. Para conferir a integridade do download:
+O resultado mostra commit, workflow e runner que geraram o artefato. Cada release também publica o bundle `provenance.intoto.jsonl`, que pode ser verificado offline ou sem consultar o histórico do repositório:
+
+```bash
+gh attestation verify keyhybrid-server-linux-amd64 \
+  --bundle provenance.intoto.jsonl --repo in100tiva/KeyHybrid
+```
+
+Para conferir a integridade do download:
 
 ```bash
 sha256sum -c SHA256SUMS.txt
