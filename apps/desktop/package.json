@@ -7,6 +7,7 @@
     "dev": "vite dev",
     "build": "vite build",
     "build:server": "cd ../server && go build -trimpath -buildvcs=false -ldflags=\"-s -w\" -o keyhybrid-server.exe .",
+    "build:server:unix": "cd ../server && go build -trimpath -buildvcs=false -ldflags=\"-s -w\" -o keyhybrid-server .",
     "preview": "vite preview",
     "prepare": "svelte-kit sync || echo ''",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
