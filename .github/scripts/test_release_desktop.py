@@ -161,6 +161,12 @@ if corpo:
     check("server_bin::candidates(" in c and "server_bin::first_existing(" in c,
           "lib.rs: ensure_gateway_running usa server_bin::candidates + first_existing")
     check("let candidates = [" not in c and ".keyhybrid" not in c, "lib.rs: lista antiga de candidatos removida")
+    # Sem WebKit local nada compila o lib.rs: pegar aqui o que só o clippy do CI veria.
+    check(re.search(r"\bbreak\b", c) is None and re.search(r"\bfor\b", c) is None, "lib.rs: sem for/break no corpo (não há mais loop)")
+    check("let bin_name = server_bin::bin_name();" in c, "lib.rs: let bin_name = server_bin::bin_name();")
+    for trecho in ('.arg("serve")', '.arg("--http=127.0.0.1:8090")', ".current_dir(parent)", "CREATE_NO_WINDOW", "cmd.spawn()",
+                   "TcpStream::connect_timeout(&addr, Duration::from_millis(250))"):
+        check(trecho in c, f"lib.rs: corpo mantém {trecho}")
     check(re.search(r"server_bin::candidates\((?:[^;]*?)RESOURCE_DIR\.get\(\)\.map\(PathBuf::as_path\)\s*,?\s*\)", c, flags=re.S) is not None,
           "lib.rs: candidates recebe RESOURCE_DIR.get().map(PathBuf::as_path)")
 check(re.search(r"static RESOURCE_DIR:\s*(std::sync::)?OnceLock<PathBuf>", lib) is not None, "lib.rs: static RESOURCE_DIR: OnceLock<PathBuf>")
