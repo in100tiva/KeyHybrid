@@ -15,7 +15,7 @@ Pré-requisitos completos em [docs/INSTALL.md](docs/INSTALL.md). Resumo:
 | Ferramenta | Versão |
 | --- | --- |
 | Go | 1.27+ |
-| Node.js | 22+ |
+| Node.js | 22.17+ |
 | pnpm | 10+ |
 | Rust + Tauri CLI | stable (só para o app desktop) |
 
@@ -44,6 +44,7 @@ make docker      # imagem local do gateway
 
 - **Go**: `gofmt` obrigatório, `go vet` limpo, zero dependências novas sem justificativa.
 - **Svelte**: Svelte 5 com *runes* (`$state`, `$derived`, `$effect`), TypeScript sem `any` novo.
+- **SvelteKit**: a configuração fica no plugin `sveltekit()` de `apps/desktop/vite.config.js` — o kit 3 não usa mais `svelte.config.js`, e o `tsconfig.json` estende `$app/tsconfig`.
 - **Rust**: `cargo fmt` e `cargo clippy` sem warnings novos.
 - **Texto e UI**: português do Brasil, sem expor detalhes internos de segurança na interface.
 - **Commits**: [Conventional Commits](https://www.conventionalcommits.org/pt-br/) — `feat:`, `fix:`, `docs:`, `test:`, `chore:`, `refactor:`, `ci:`.

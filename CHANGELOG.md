@@ -6,6 +6,14 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o 
 
 ## [Não publicado]
 
+### Alterado
+
+- **SvelteKit 3**: interface migrada de `@sveltejs/kit` 2.x para 3.4 e de `@sveltejs/adapter-static` 3.x para 4.x. A configuração deixou de ficar em `svelte.config.js` (arquivo removido) e passou para o plugin `sveltekit()` em `apps/desktop/vite.config.js`; o `tsconfig.json` agora estende o `$app/tsconfig` gerado pelo próprio kit.
+
+### Segurança
+
+- Os avisos do GitHub Advisory que atingiam a linha 2.x do `@sveltejs/kit` deixam de se aplicar, e o `cookie` transitivo passa a ser resolvido em `2.0.2`.
+
 ### Planejado
 
 - Instaladores `.deb` e `.msi` publicados como anexos de release (build verificado em ambiente desktop com WebKit/WebView2).
