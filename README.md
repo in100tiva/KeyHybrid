@@ -1,5 +1,14 @@
 # 🛡️ KeyHybrid — Zero-Knowledge API Key Vault & Local AI Gateway
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-3DA639?style=flat-square)](LICENSE)
+![Go](https://img.shields.io/badge/Go-00ADD8?style=flat-square&logo=go&logoColor=white)
+![Rust](https://img.shields.io/badge/Rust-000000?style=flat-square&logo=rust&logoColor=white)
+![Tauri](https://img.shields.io/badge/Tauri-v2-24C8DB?style=flat-square&logo=tauri&logoColor=white)
+![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00?style=flat-square&logo=svelte&logoColor=white)
+
+> **Em 30 segundos:** um cofre local que guarda as chaves reais dos provedores de IA e expõe um gateway compatível com a API da OpenAI em `http://127.0.0.1:8090/v1`. Seus agentes usam tokens virtuais (`kh-openrouter`); a chave real nunca entra em `.env`, histórico de shell ou código.
+
+
 O **KeyHybrid** é um cofre desktop de segurança para chaves de API de Inteligência Artificial (**OpenRouter, Google Gemini, Anthropic**) combinado com um **Reverse Proxy Local Zero-Knowledge** (`http://127.0.0.1:8090/v1`), construído em **Tauri v2 (Rust)**, **Svelte 5** e **Go (PocketBase)**.
 
 Em vez de expor suas chaves reais (`sk-or-v1-...`, `AIza...`, `sk-ant-...`) em arquivos `.env`, histórico de terminal, scripts ou agentes autônomos de código, você armazena a chave real **uma única vez** dentro do cofre criptografado do **KeyHybrid** e utiliza apenas **Tokens Virtuais** (`Bearer kh-openrouter`).
@@ -323,3 +332,8 @@ pip install faster-whisper sounddevice av numpy
 python apps/server/friday_ear.py
 ```
 *(Para controlar uma lâmpada Xiaomi localmente via UDP 54321, crie o arquivo `apps/server/.xiaomi_token` contendo os 32 caracteres hexadecimais do token MiIO da sua lâmpada ou defina a variável de ambiente `XIAOMI_BULB_TOKEN`).*
+
+
+## Licença
+
+[MIT](LICENSE) © Luan Oliveira dos Santos
