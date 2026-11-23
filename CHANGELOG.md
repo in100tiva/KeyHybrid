@@ -15,6 +15,8 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o 
 - **Notas de release categorizadas**: `.github/release.yml` agrupa as mudanças por área (segurança, interface, gateway, dependências, CI e documentação).
 - **OpenSSF Scorecard**: análise semanal da postura de segurança do repositório, publicada no code scanning e no painel público do Scorecard.
 - **Bundle de procedência no release**: cada release passa a anexar `provenance.intoto.jsonl` com a atestação de build gerada pelo GitHub, permitindo conferir a origem dos binários com `gh attestation verify --bundle provenance.intoto.jsonl --repo in100tiva/KeyHybrid`.
+- **Importar `.env` para o cofre** ([#18](https://github.com/in100tiva/KeyHybrid/issues/18)): **Importar .env** no dock (e no estado vazio da lista) abre uma área mascarada onde se cola o conteúdo ou se solta o arquivo. As chaves conhecidas (`OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`/`GOOGLE_API_KEY`, `OPENAI_API_KEY`, `GITHUB_TOKEN`/`GH_TOKEN`, `SUPABASE_ACCESS_TOKEN`, `VERCEL_TOKEN`) aparecem numa prévia com provedor, apelido e os 4 últimos caracteres e são gravadas pelo mesmo `save_vault_key` do cadastro manual (AES-256-GCM no gateway). O prefixo da chave vence o nome da variável, a importação nunca sobrescreve um apelido existente e devolve a chave ativa de antes; no fim, uma checklist (apagar o `.env`, girar as chaves) e o comando `kh run` para rodar o projeto sem o arquivo.
+- **Testes da interface**: `pnpm run test` em `apps/desktop` (`node --test`, sem dependência nova), também no CI e no `make test`.
 
 ### Alterado
 
@@ -22,6 +24,7 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o 
 - `make check` e `make fmt` passam a cobrir o código Rust (`cargo fmt`), e o `docs/INSTALL.md` documenta o requisito de **Node.js 22.17+** e `pnpm` 10 no lugar de `npm`.
 - **Tokens de menor privilégio**: nenhum workflow declara permissão de escrita no nível do arquivo; `codeql.yml`, `container.yml`, `dependency-review.yml` e `release.yml` concentram a escrita apenas no job que realmente precisa dela, e os demais rodam com `contents: read`.
 - **Actions fixadas por SHA**: todas as `uses:` dos workflows estão presas ao commit SHA da versão usada (com a tag ao lado, em comentário), e as imagens base do `Dockerfile` estão presas ao digest SHA-256 da imagem — o Dependabot continua atualizando as duas coisas.
+- **Drag-and-drop da janela**: `dragDropEnabled: false` no `tauri.conf.json`, para o drop HTML5 do `.env` chegar à interface; soltar um arquivo fora da área de importação é barrado e não abre o arquivo na janela.
 
 ### Corrigido
 
@@ -30,12 +33,12 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o 
 ### Segurança
 
 - Os avisos do GitHub Advisory que atingiam a linha 2.x do `@sveltejs/kit` deixam de se aplicar, e o `cookie` transitivo passa a ser resolvido em `2.0.2`.
+- **Chave da OpenAI não vai mais para a OpenRouter**: no cadastro manual, uma chave `sk-proj-`/`sk-svcacct-` colada ficava com o provedor padrão (`openrouter`) e o gateway a enviaria à OpenRouter. Agora o prefixo é reconhecido e a chave vira o serviço `openai`, com destino fixo `https://api.openai.com`.
 
 ### Planejado
 
 - Instaladores `.deb` e `.msi` publicados como anexos de release (build verificado em ambiente desktop com WebKit/WebView2).
 - Suporte a mais provedores no gateway, mantendo o contrato compatível com a API da OpenAI.
-- Assistente de migração de segredos a partir de `.env` existentes.
 
 ## [0.1.0] - 2026-11-23
 

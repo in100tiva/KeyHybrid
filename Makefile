@@ -23,8 +23,9 @@ check: ## Roda go vet, svelte-check e cargo fmt --check
 	cd apps/desktop && $(PNPM) run check
 	cd apps/desktop/src-tauri && cargo fmt --all -- --check
 
-test: ## Roda os testes do gateway
+test: ## Roda os testes do gateway e da interface
 	cd apps/server && $(GO) test -race ./...
+	cd apps/desktop && $(PNPM) run test
 
 fmt: ## Formata o código Go e Rust
 	cd apps/server && gofmt -w .

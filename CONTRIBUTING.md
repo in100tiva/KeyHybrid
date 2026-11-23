@@ -35,7 +35,7 @@ Comandos úteis:
 ```bash
 make help        # lista os alvos
 make check       # go vet + svelte-check + cargo fmt --check
-make test        # testes Go com -race
+make test        # testes Go com -race e da interface
 make build       # gateway + interface
 make docker      # imagem local do gateway
 ```
@@ -53,6 +53,7 @@ make docker      # imagem local do gateway
 ## Testes
 
 - `apps/server`: testes Go (`go test -race ./...`). Para fluxos que tocam criptografia, prefira testes de unidade com chaves efêmeras.
+- `apps/desktop`: `pnpm run test` (`node --test`, sem dependência). Regra pura da interface, como a importação de `.env`, fica em `src/lib/` para ser testada assim, com valores falsos.
 - Nunca versione `pb_data/`, `*.db`, `~/.keyhybrid`, `.master.key`, `.cli.token` ou qualquer token real, nem em fixtures.
 
 ## Processo de PR
