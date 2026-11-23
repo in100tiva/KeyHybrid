@@ -5,13 +5,16 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
+# Menor privilégio no nível do workflow; escrita só no job de publicação.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   binaries:
     name: Binário ${{ matrix.goos }}/${{ matrix.goarch }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -23,10 +26,10 @@ jobs:
           - { goos: windows, goarch: amd64 }
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Configurar Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: apps/server/go.mod
 
@@ -47,7 +50,7 @@ jobs:
             -o "dist/${name}${ext}" .
 
       - name: Guardar binário
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: keyhybrid-server-${{ matrix.goos }}-${{ matrix.goarch }}
           path: apps/server/dist/*
@@ -63,7 +66,7 @@ jobs:
       attestations: write
     steps:
       - name: Baixar binários
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: dist
           merge-multiple: true
@@ -75,13 +78,26 @@ jobs:
           sha256sum keyhybrid-server-* > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
+      # Procedência assinada pelo GitHub (keyless, via OIDC) para cada binário.
       - name: Atestar procedência dos binários
-        uses: actions/attest-build-provenance@v4
+        id: attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: dist/*
 
+      # O bundle é anexado ao release para que qualquer pessoa possa conferir
+      # a origem com `gh attestation verify --bundle provenance.intoto.jsonl`.
+      - name: Anexar bundle de procedência
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          test -n "$BUNDLE"
+          cp "$BUNDLE" dist/provenance.intoto.jsonl
+          ls -l dist/provenance.intoto.jsonl
+
       - name: Criar release no GitHub
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           name: KeyHybrid ${{ github.ref_name }}
           generate_release_notes: true

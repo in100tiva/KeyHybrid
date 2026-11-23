@@ -14,11 +14,14 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o 
 - **Procedência dos artefatos**: os binários e checksums de cada release recebem *build provenance* assinado pelo GitHub (`actions/attest-build-provenance`) e a imagem do GHCR passa a ser publicada com `provenance: mode=max` e SBOM.
 - **Notas de release categorizadas**: `.github/release.yml` agrupa as mudanças por área (segurança, interface, gateway, dependências, CI e documentação).
 - **OpenSSF Scorecard**: análise semanal da postura de segurança do repositório, publicada no code scanning e no painel público do Scorecard.
+- **Bundle de procedência no release**: cada release passa a anexar `provenance.intoto.jsonl` com a atestação de build gerada pelo GitHub, permitindo conferir a origem dos binários com `gh attestation verify --bundle provenance.intoto.jsonl --repo in100tiva/KeyHybrid`.
 
 ### Alterado
 
 - **SvelteKit 3**: interface migrada de `@sveltejs/kit` 2.x para 3.4 e de `@sveltejs/adapter-static` 3.x para 4.x. A configuração deixou de ficar em `svelte.config.js` (arquivo removido) e passou para o plugin `sveltekit()` em `apps/desktop/vite.config.js`; o `tsconfig.json` agora estende o `$app/tsconfig` gerado pelo próprio kit.
 - `make check` e `make fmt` passam a cobrir o código Rust (`cargo fmt`), e o `docs/INSTALL.md` documenta o requisito de **Node.js 22.17+** e `pnpm` 10 no lugar de `npm`.
+- **Tokens de menor privilégio**: nenhum workflow declara permissão de escrita no nível do arquivo; `codeql.yml`, `container.yml`, `dependency-review.yml` e `release.yml` concentram a escrita apenas no job que realmente precisa dela, e os demais rodam com `contents: read`.
+- **Actions fixadas por SHA**: todas as `uses:` dos workflows estão presas ao commit SHA da versão usada (com a tag ao lado, em comentário), e as imagens base do `Dockerfile` estão presas ao digest SHA-256 da imagem — o Dependabot continua atualizando as duas coisas.
 
 ### Corrigido
 
