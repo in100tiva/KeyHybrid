@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/in100tiva/KeyHybrid/actions/workflows/ci.yml/badge.svg)](https://github.com/in100tiva/KeyHybrid/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/in100tiva/KeyHybrid/actions/workflows/codeql.yml/badge.svg)](https://github.com/in100tiva/KeyHybrid/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/in100tiva/KeyHybrid/badge)](https://securityscorecards.dev/viewer/?uri=github.com/in100tiva/KeyHybrid)
 [![Release](https://img.shields.io/github/v/release/in100tiva/KeyHybrid?style=flat-square&color=3DA639)](https://github.com/in100tiva/KeyHybrid/releases)
 [![Container](https://img.shields.io/badge/ghcr.io-keyhybrid-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/in100tiva/KeyHybrid/pkgs/container/keyhybrid)
 [![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-1f6feb?style=flat-square)](https://in100tiva.github.io/KeyHybrid/)
@@ -163,6 +164,7 @@ Guia completo em **[docs/INSTALL.md](docs/INSTALL.md)**.
 | Procedência dos artefatos | Build provenance assinado pelo GitHub (`actions/attest-build-provenance`) em cada binário e checksum — ver [SECURITY.md](SECURITY.md#verificação-de-artefatos) |
 | Imagem de container | [`.github/workflows/container.yml`](.github/workflows/container.yml) — multi-arquitetura no GHCR com SBOM e procedência máxima |
 | Análise estática | [CodeQL](https://github.com/in100tiva/KeyHybrid/security/code-scanning) (Go e JavaScript/TypeScript) |
+| Postura de segurança | [OpenSSF Scorecard](https://securityscorecards.dev/viewer/?uri=github.com/in100tiva/KeyHybrid) semanal, publicado no code scanning e no painel público |
 | Dependências | Dependabot semanal para Go, npm, Cargo, Actions e Docker |
 | Segurança do repositório | Secret scanning com push protection, Dependabot alerts e [política de segurança](SECURITY.md) |
 
