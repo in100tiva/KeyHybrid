@@ -8,6 +8,7 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o 
 
 ### Adicionado
 
+- **Instaladores desktop**: cada release `v*` passa a publicar `KeyHybrid_<versão>_amd64.deb`, `KeyHybrid_<versão>_x64_en-US.msi` e `KeyHybrid_<versão>_x64-setup.exe` com o `keyhybrid-server` embutido, cobertos por `SHA256SUMS.txt` e pela atestação de procedência.
 - **CI do desktop em Rust**: job `Desktop Rust (Tauri)` no `.github/workflows/ci.yml`, com `cargo fmt --all -- --check` e `cargo clippy --all-targets --locked -- -D warnings` no `ubuntu-latest`, bibliotecas do Tauri v2 (WebKitGTK 4.1) e cache do Cargo.
 - **Revisão de dependências**: `.github/workflows/dependency-review.yml` comenta no PR e bloqueia merges que introduzam dependências com severidade alta.
 - **Política de segurança**: seção sobre os dois advisories sem correção upstream (`glib` e `disintegration/imaging`) e por que eles não são alcançáveis no KeyHybrid.
@@ -18,6 +19,7 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o 
 
 ### Alterado
 
+- **`workflow_dispatch` do `release.yml`**: disparos manuais passam a só ensaiar o build dos binários e instaladores (gerando os artifacts da execução), sem publicar uma release fora de tags `v*`.
 - **SvelteKit 3**: interface migrada de `@sveltejs/kit` 2.x para 3.4 e de `@sveltejs/adapter-static` 3.x para 4.x. A configuração deixou de ficar em `svelte.config.js` (arquivo removido) e passou para o plugin `sveltekit()` em `apps/desktop/vite.config.js`; o `tsconfig.json` agora estende o `$app/tsconfig` gerado pelo próprio kit.
 - `make check` e `make fmt` passam a cobrir o código Rust (`cargo fmt`), e o `docs/INSTALL.md` documenta o requisito de **Node.js 22.17+** e `pnpm` 10 no lugar de `npm`.
 - **Tokens de menor privilégio**: nenhum workflow declara permissão de escrita no nível do arquivo; `codeql.yml`, `container.yml`, `dependency-review.yml` e `release.yml` concentram a escrita apenas no job que realmente precisa dela, e os demais rodam com `contents: read`.
