@@ -158,7 +158,7 @@ fn encode_pin(salt: &[u8], pin: &str) -> String {
 /// Gera salt aleatório de 16 bytes e devolve o valor a guardar
 fn make_stored(pin: &str) -> Result<String, String> {
     let mut salt = [0u8; 16];
-    getrandom::getrandom(&mut salt).map_err(|e| e.to_string())?;
+    getrandom::fill(&mut salt).map_err(|e| e.to_string())?;
     Ok(encode_pin(&salt, pin))
 }
 
