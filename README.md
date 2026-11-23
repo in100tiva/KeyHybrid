@@ -14,7 +14,7 @@
 
 > **Em 30 segundos:** um cofre local que guarda as chaves reais dos provedores de IA e expõe um gateway compatível com a API da OpenAI em `http://127.0.0.1:8090/v1`. Seus agentes usam tokens virtuais (`kh-openrouter`); a chave real nunca entra em `.env`, histórico de shell ou código.
 
-O **KeyHybrid** é um cofre desktop para chaves de API de IA (**OpenRouter, Google Gemini, Anthropic**) combinado com um **reverse proxy local zero-knowledge**, construído em **Tauri v2 (Rust)**, **Svelte 5** e **Go (PocketBase)**.
+O **KeyHybrid** é um cofre desktop para chaves de API de IA (**OpenRouter, Google Gemini, Anthropic**) combinado com um **reverse proxy local zero-knowledge**, construído em **Tauri v2 (Rust)**, **SvelteKit 3 (Svelte 5)** e **Go (PocketBase)**.
 
 Em vez de espalhar chaves reais (`sk-or-v1-...`, `AIza...`, `sk-ant-...`) por arquivos `.env`, scripts ou agentes autônomos, você armazena a chave **uma única vez** no cofre criptografado e usa apenas tokens virtuais (`Bearer kh-openrouter`).
 
@@ -31,7 +31,7 @@ flowchart LR
     subgraph Client["Clientes & Agentes Locais"]
         CLI["Terminal / cURL / SDK OpenAI"]
         IDE["Agentes de IA (Cursor, etc.)"]
-        UI["Desktop (Svelte 5 + Tauri v2)"]
+        UI["Desktop (SvelteKit 3 + Tauri v2)"]
     end
 
     subgraph SecurityLayer["Camada de Segurança Nativa"]

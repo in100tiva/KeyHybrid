@@ -77,10 +77,10 @@ struct PersistedPinState {
 }
 
 fn load_pin_state() -> PersistedPinState {
-    if let Ok(data) = fs::read_to_string(pin_state_path()) {
-        if let Ok(state) = serde_json::from_str(&data) {
-            return state;
-        }
+    if let Ok(data) = fs::read_to_string(pin_state_path())
+        && let Ok(state) = serde_json::from_str(&data)
+    {
+        return state;
     }
     PersistedPinState::default()
 }
@@ -134,7 +134,7 @@ fn to_hex(bytes: &[u8]) -> String {
 }
 
 fn from_hex(s: &str) -> Option<Vec<u8>> {
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return None;
     }
     (0..s.len())
@@ -202,10 +202,10 @@ fn check_pin(stored: &str, pin: &str) -> Option<(bool, bool)> {
 
 /// Lê o PIN guardado: keyring primeiro, depois o arquivo de fallback
 fn stored_pin() -> Option<String> {
-    if let Ok(entry) = Entry::new(SERVICE_NAME, PIN_ENTRY_KEY) {
-        if let Ok(value) = entry.get_password() {
-            return Some(value.trim().to_string());
-        }
+    if let Ok(entry) = Entry::new(SERVICE_NAME, PIN_ENTRY_KEY)
+        && let Ok(value) = entry.get_password()
+    {
+        return Some(value.trim().to_string());
     }
     fs::read_to_string(fallback_pin_path())
         .ok()
@@ -234,10 +234,10 @@ fn backoff_secs(falhas: u32) -> u64 {
 fn bloqueio_restante() -> Option<u64> {
     let state = load_pin_state();
     let agora = current_unix_time();
-    if let Some(ate) = state.bloqueado_ate_unix {
-        if agora < ate {
-            return Some(ate - agora);
-        }
+    if let Some(ate) = state.bloqueado_ate_unix
+        && agora < ate
+    {
+        return Some(ate - agora);
     }
     None
 }
@@ -310,10 +310,10 @@ pub fn verify_vault_pin(window: tauri::WebviewWindow, pin: String) -> Result<boo
         Some((true, precisa_migrar)) => {
             if precisa_migrar {
                 // Troca o PIN antigo pelo hash Argon2id (KH-08 / KH-18)
-                if let Ok(novo) = make_stored(&input_holder.secret) {
-                    if let Err(e) = persist_pin(&novo) {
-                        eprintln!("[KeyHybrid Vault] Falha ao persistir migração do PIN: {e}");
-                    }
+                if let Ok(novo) = make_stored(&input_holder.secret)
+                    && let Err(e) = persist_pin(&novo)
+                {
+                    eprintln!("[KeyHybrid Vault] Falha ao persistir migração do PIN: {e}");
                 }
             }
             registrar_resultado(true);

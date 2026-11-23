@@ -17,6 +17,10 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o 
 - **SvelteKit 3**: interface migrada de `@sveltejs/kit` 2.x para 3.4 e de `@sveltejs/adapter-static` 3.x para 4.x. A configuração deixou de ficar em `svelte.config.js` (arquivo removido) e passou para o plugin `sveltekit()` em `apps/desktop/vite.config.js`; o `tsconfig.json` agora estende o `$app/tsconfig` gerado pelo próprio kit.
 - `make check` e `make fmt` passam a cobrir o código Rust (`cargo fmt`), e o `docs/INSTALL.md` documenta o requisito de **Node.js 22.17+** e `pnpm` 10 no lugar de `npm`.
 
+### Corrigido
+
+- **Lints do Rust**: os avisos que o `cargo clippy -D warnings` acusava em `vault.rs`, `lib.rs` e `gateway.rs` foram resolvidos (`if` aninhados colapsados com *let chains* do Rust 2024 e uso de `is_multiple_of`); o comando `save_vault_key` mantém a assinatura plana exigida pelo `invoke` do Tauri.
+
 ### Segurança
 
 - Os avisos do GitHub Advisory que atingiam a linha 2.x do `@sveltejs/kit` deixam de se aplicar, e o `cookie` transitivo passa a ser resolvido em `2.0.2`.

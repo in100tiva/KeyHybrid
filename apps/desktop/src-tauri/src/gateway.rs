@@ -108,6 +108,8 @@ pub async fn list_vault_keys(gateway_url: String) -> Result<Vec<KeySafeView>, St
         .map_err(|e| format!("Erro ao ler chaves: {e}"))
 }
 
+// Um campo por argumento é exigido pelo contrato de `invoke` do Tauri.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn save_vault_key(
     window: tauri::WebviewWindow,
