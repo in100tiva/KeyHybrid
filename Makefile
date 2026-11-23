@@ -18,15 +18,17 @@ build-server: ## Compila o gateway Go para o host atual
 build-desktop: ## Instala dependências e compila a interface Svelte
 	cd apps/desktop && $(PNPM) install --frozen-lockfile && $(PNPM) run build
 
-check: ## Roda go vet e svelte-check
+check: ## Roda go vet, svelte-check e cargo fmt --check
 	cd apps/server && $(GO) vet ./...
 	cd apps/desktop && $(PNPM) run check
+	cd apps/desktop/src-tauri && cargo fmt --all -- --check
 
 test: ## Roda os testes do gateway
 	cd apps/server && $(GO) test -race ./...
 
-fmt: ## Formata o código Go
+fmt: ## Formata o código Go e Rust
 	cd apps/server && gofmt -w .
+	cd apps/desktop/src-tauri && cargo fmt --all
 
 docker: ## Constrói a imagem do gateway localmente
 	docker build -t keyhybrid-gateway:local .

@@ -41,6 +41,15 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source "$HOME/.cargo/env"
 ```
 
+#### Node.js 22.17+ e pnpm 10 (obrigatório para a interface)
+
+O `nodejs` da distribuição costuma ser mais antigo que o exigido pelo SvelteKit 3. Se `node --version` mostrar algo abaixo de `22.17`, instale o LTS atual em <https://nodejs.org> e depois:
+
+```bash
+npm install -g pnpm@10
+pnpm --version   # 10.x
+```
+
 ### 2. Clonar e instalar (1 comando)
 
 ```bash
@@ -73,7 +82,8 @@ Status do gateway: `systemctl --user status keyhybrid`.
 
 ```bash
 cd apps/desktop
-npm run tauri build
+pnpm install --frozen-lockfile
+pnpm run tauri build
 ```
 
 Os pacotes ficam em `apps/desktop/src-tauri/target/release/bundle/`.
@@ -89,6 +99,8 @@ winget install GoLang.Go
 winget install Rustlang.Rustup
 winget install OpenJS.NodeJS.LTS
 ```
+
+> **Node.js 22.17+** e **pnpm 10** são obrigatórios para a interface: `npm install -g pnpm@10`. O `OpenJS.NodeJS.LTS` do winget já costuma atender ao requisito de Node.
 
 Para compilar Rust no Windows, instale também o **Microsoft C++ Build Tools**.
 
@@ -106,8 +118,8 @@ O `run_windows.bat` compila o `keyhybrid-server.exe` (se necessário), sobe o ga
 
 ```powershell
 cd apps\desktop
-npm install
-npm run tauri build
+pnpm install --frozen-lockfile
+pnpm run tauri build
 ```
 
-O build compila o servidor Go (`npm run build:server`) e o empacota: o `keyhybrid-server.exe` vai para `server\` ao lado do `desktop.exe`. O instalador NSIS encerra o gateway em execução antes de atualizar ou desinstalar.
+O build compila o servidor Go (`pnpm run build:server`) e o empacota: o `keyhybrid-server.exe` vai para `server\` ao lado do `desktop.exe`. O instalador NSIS encerra o gateway em execução antes de atualizar ou desinstalar.

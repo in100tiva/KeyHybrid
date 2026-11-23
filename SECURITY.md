@@ -44,6 +44,17 @@ Se preferir canal alternativo, abra uma issue **vazia** apenas dizendo "canal pr
 - Falhas em provedores upstream (OpenRouter, Google, Anthropic) — reporte diretamente a eles.
 - Ausência de recursos que dependem de plano pago da plataforma.
 
+## Dependências com advisories sem correção upstream
+
+Dois alertas do Dependabot seguem abertos de forma **consciente**: em ambos não existe versão corrigida publicada e o código vulnerável não é alcançável pelo fluxo do KeyHybrid. Eles ficam registrados aqui em vez de serem dispensados em silêncio.
+
+| Pacote | Severidade | Situação |
+| --- | --- | --- |
+| `glib` 0.18.5 (`apps/desktop/src-tauri/Cargo.lock`) — [GHSA-wrw7-89jp-8q8g](https://github.com/advisories/GHSA-wrw7-89jp-8q8g) | média | Afeta só os impls de `Iterator`/`DoubleEndedIterator` de `glib::VariantStrIter` (iteração de strings em `GVariant`); o KeyHybrid não usa `VariantStrIter`. A correção exige `glib >= 0.20`, que só entra quando a cadeia GTK usada pelo Tauri (`gtk` 0.18) subir de major — fora do nosso controle. |
+| `github.com/disintegration/imaging` 1.6.2 (`apps/server/go.mod`) — [GHSA-q7pp-wcgr-pffx](https://github.com/advisories/GHSA-q7pp-wcgr-pffx) | baixa | Dependência **indireta** do PocketBase (`apis` → `tools/filesystem`), usada apenas para gerar thumbnails de arquivos de imagem. O app não define campos de imagem e não expõe upload de arquivos, então esse caminho não é alcançável. `v1.6.2` é a última versão publicada. |
+
+Se você encontrar um caminho de exploração real para qualquer um dos dois, trate como vulnerabilidade e siga o [canal privado](#como-reportar-uma-vulnerabilidade).
+
 ## Nosso compromisso
 
 | Etapa | Prazo alvo |

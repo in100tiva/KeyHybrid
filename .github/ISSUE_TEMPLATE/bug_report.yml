@@ -30,7 +30,7 @@ body:
       options:
         - App desktop (Tauri + Svelte)
         - Gateway local (Go, porta 8090)
-        - `kh run` / CLI
+        - '`kh run` / CLI'
         - Instalação e empacotamento (.deb, .msi)
         - Documentação
     validations:

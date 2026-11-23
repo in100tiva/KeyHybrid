@@ -41,7 +41,9 @@ pub fn relock() {
 }
 
 pub fn assert_local_origin(window: &tauri::WebviewWindow) -> Result<(), String> {
-    let url = window.url().map_err(|e| format!("Erro ao obter URL da janela: {e}"))?;
+    let url = window
+        .url()
+        .map_err(|e| format!("Erro ao obter URL da janela: {e}"))?;
     let u_str = url.as_str();
     if u_str.starts_with("tauri://localhost")
         || u_str.starts_with("http://tauri.localhost")
@@ -145,7 +147,11 @@ fn from_hex(s: &str) -> Option<Vec<u8>> {
 fn encode_pin(salt: &[u8], pin: &str) -> String {
     match hash_pin_argon2(salt, pin) {
         Ok(h) => format!("argon2id:{}:{}", to_hex(salt), to_hex(&h)),
-        Err(_) => format!("sha256:{}:{}", to_hex(salt), to_hex(&hash_pin_sha256(salt, pin))),
+        Err(_) => format!(
+            "sha256:{}:{}",
+            to_hex(salt),
+            to_hex(&hash_pin_sha256(salt, pin))
+        ),
     }
 }
 
@@ -253,12 +259,17 @@ fn registrar_resultado(acertou: bool) {
 /// Verifica se existe um PIN de 6 dígitos configurado
 #[tauri::command]
 pub fn has_vault_pin() -> Result<bool, String> {
-    Ok(stored_pin().is_some_and(|s| is_legacy(&s) || s.starts_with("sha256:") || s.starts_with("argon2id:")))
+    Ok(stored_pin()
+        .is_some_and(|s| is_legacy(&s) || s.starts_with("sha256:") || s.starts_with("argon2id:")))
 }
 
 /// Define um novo PIN de 6 dígitos
 #[tauri::command]
-pub fn set_vault_pin(window: tauri::WebviewWindow, pin: String, current_pin: Option<String>) -> Result<(), String> {
+pub fn set_vault_pin(
+    window: tauri::WebviewWindow,
+    pin: String,
+    current_pin: Option<String>,
+) -> Result<(), String> {
     assert_local_origin(&window)?;
     let holder = SecretHolder {
         secret: pin.trim().to_string(),
@@ -318,7 +329,10 @@ pub fn verify_vault_pin(window: tauri::WebviewWindow, pin: String) -> Result<boo
 
 /// Remove o PIN de bloqueio do cofre (só com o cofre destravado nesta sessão)
 #[tauri::command]
-pub fn clear_vault_pin(window: tauri::WebviewWindow, current_pin: Option<String>) -> Result<(), String> {
+pub fn clear_vault_pin(
+    window: tauri::WebviewWindow,
+    current_pin: Option<String>,
+) -> Result<(), String> {
     assert_local_origin(&window)?;
     if !is_unlocked() {
         return Err("Destrave o cofre antes de remover o PIN.".to_string());
@@ -360,7 +374,11 @@ mod tests {
 
     #[test]
     fn pin_antigo_sha256_bate_e_pede_migracao() {
-        let stored = format!("sha256:{}:{}", to_hex(&SALT), to_hex(&hash_pin_sha256(&SALT, "123456")));
+        let stored = format!(
+            "sha256:{}:{}",
+            to_hex(&SALT),
+            to_hex(&hash_pin_sha256(&SALT, "123456"))
+        );
         assert_eq!(check_pin(&stored, "123456"), Some((true, true)));
         assert_eq!(check_pin(&stored, "654321"), Some((false, true)));
     }

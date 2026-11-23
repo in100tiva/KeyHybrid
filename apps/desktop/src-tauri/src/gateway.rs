@@ -1,4 +1,4 @@
-use crate::vault::{assert_local_origin, has_vault_pin, is_unlocked, SecretHolder};
+use crate::vault::{SecretHolder, assert_local_origin, has_vault_pin, is_unlocked};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -130,7 +130,10 @@ pub async fn save_vault_key(
     }
 
     if has_vault_pin().unwrap_or(false) && !is_unlocked() {
-        return Err("Cofre bloqueado. Digite seu PIN de 6 dígitos para autorizar salvar chaves.".to_string());
+        return Err(
+            "Cofre bloqueado. Digite seu PIN de 6 dígitos para autorizar salvar chaves."
+                .to_string(),
+        );
     }
 
     let token = cli_token()?;
@@ -174,7 +177,11 @@ pub async fn save_vault_key(
 }
 
 #[tauri::command]
-pub async fn activate_vault_key(window: tauri::WebviewWindow, gateway_url: String, id: String) -> Result<(), String> {
+pub async fn activate_vault_key(
+    window: tauri::WebviewWindow,
+    gateway_url: String,
+    id: String,
+) -> Result<(), String> {
     assert_local_origin(&window)?;
     let token = cli_token()?;
 
@@ -216,7 +223,10 @@ pub async fn delete_vault_key(
 ) -> Result<(), String> {
     assert_local_origin(&window)?;
     if has_vault_pin().unwrap_or(false) && !is_unlocked() {
-        return Err("Cofre bloqueado. Digite seu PIN de 6 dígitos para autorizar excluir chaves.".to_string());
+        return Err(
+            "Cofre bloqueado. Digite seu PIN de 6 dígitos para autorizar excluir chaves."
+                .to_string(),
+        );
     }
 
     let token = cli_token()?;
