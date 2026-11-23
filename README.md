@@ -178,6 +178,11 @@ Contribuições são bem-vindas. Leia **[CONTRIBUTING.md](CONTRIBUTING.md)** e o
 - Bugs e sugestões: use os templates de issue.
 - Dúvidas e ideias: [Discussões](https://github.com/in100tiva/KeyHybrid/discussions).
 - Vulnerabilidades: **nunca** em issue pública — siga o **[SECURITY.md](SECURITY.md)**.
+- Onde pedir ajuda / o que esperar de prazo: **[SUPPORT.md](SUPPORT.md)**.
+
+## Roadmap
+
+O que está planejado para a próxima release fica no milestone **[v0.2.0](https://github.com/in100tiva/KeyHybrid/milestone/1)**: instaladores desktop (`.deb`/`.msi`), múltiplos providers no gateway e assistente de migração de `.env`. Para propor algo novo, abra uma [discussão em Ideas](https://github.com/in100tiva/KeyHybrid/discussions/categories/ideas).
 
 ## Estrutura
 

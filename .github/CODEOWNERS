@@ -1,0 +1,15 @@
+# Mantenedor responsável por revisar mudanças em cada área.
+# Formato: <padrão de caminho> <@usuário>
+# Docs: https://docs.github.com/repos/github/creating-cloning-and-archiving-repositories/about-code-owners
+
+* @in100tiva
+
+# Cofre, criptografia e gateway: mudanças aqui exigem revisão extra.
+/apps/server/ @in100tiva
+/apps/desktop/src-tauri/ @in100tiva
+/docs/SPEC-cofre-universal.md @in100tiva
+
+# Pipeline e política de segurança.
+/.github/ @in100tiva
+/SECURITY.md @in100tiva
+/Dockerfile @in100tiva
