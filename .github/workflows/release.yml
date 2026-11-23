@@ -58,6 +58,8 @@ jobs:
 
   desktop:
     name: Instalador desktop (${{ matrix.os }})
+    # Tag de pré-release (v0.3.0-rc.1): o MSI só aceita X.Y.Z, então os instaladores ficam
+    # de fora e a release sai só com o gateway, como antes.
     if: ${{ !(startsWith(github.ref, 'refs/tags/') && contains(github.ref_name, '-')) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
@@ -137,19 +139,12 @@ jobs:
           set -euo pipefail
           deb=$(ls src-tauri/target/release/bundle/deb/*.deb)
           dpkg-deb -c "$deb" | tee "$RUNNER_TEMP/deb.txt"
-          if ! grep -E '^-rwx.* (\./)?usr/lib/KeyHybrid/server/keyhybrid-server$' "$RUNNER_TEMP/deb.txt"; then
-            echo "::error::servidor empacotado ausente ou sem permissão de execução no .deb"
-            exit 1
-          fi
-          if ! grep -E '^-rwx.* (\./)?usr/bin/keyhybrid$' "$RUNNER_TEMP/deb.txt"; then
-            echo "::error::binário principal usr/bin/keyhybrid ausente no .deb"
-            exit 1
-          fi
+          grep -qE '^-rwx.* (\./)?usr/lib/KeyHybrid/server/keyhybrid-server$' "$RUNNER_TEMP/deb.txt" \
+            || { echo "::error::.deb sem usr/lib/KeyHybrid/server/keyhybrid-server executável"; exit 1; }
+          grep -qE '^-rwx.* (\./)?usr/bin/keyhybrid$' "$RUNNER_TEMP/deb.txt" \
+            || { echo "::error::.deb sem usr/bin/keyhybrid"; exit 1; }
           pkg=$(dpkg-deb -f "$deb" Package)
-          if ! test "$pkg" = key-hybrid; then
-            echo "::error::nome do pacote Debian inesperado: $pkg (esperado key-hybrid)"
-            exit 1
-          fi
+          test "$pkg" = key-hybrid || { echo "::error::pacote '$pkg', esperado key-hybrid"; exit 1; }
 
       # Com vários padrões no upload, o artifact guardaria deb/, msi/ e nsis/ como subpastas
       # e o `sha256sum KeyHybrid_*` do job release não acharia nada na raiz de dist/.
@@ -169,17 +164,15 @@ jobs:
           path: ${{ runner.temp }}/instaladores/*
           if-no-files-found: error
 
-  # Só publica em tag v*; workflow_dispatch apenas ensaia os builds de binários e instaladores.
-  # Em tags de pré-release (com '-'), desktop é skipped e a release publica os binários do gateway;
-  # se desktop falhar numa tag estável, a release inteira é bloqueada.
   release:
     name: Publicar release
     needs: [binaries, desktop]
+    # workflow_dispatch só ensaia o build; publicar é coisa de tag.
+    # desktop pulado (pré-release) não pode bloquear a publicação do gateway.
     if: >-
-      !cancelled() &&
-      startsWith(github.ref, 'refs/tags/v') &&
-      needs.binaries.result == 'success' &&
-      (needs.desktop.result == 'success' || needs.desktop.result == 'skipped')
+      ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v')
+      && needs.binaries.result == 'success'
+      && (needs.desktop.result == 'success' || needs.desktop.result == 'skipped') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -196,7 +189,7 @@ jobs:
         working-directory: dist
         run: |
           set -euo pipefail
-          shopt -s nullglob
+          shopt -s nullglob  # pré-release: sem KeyHybrid_*
           sha256sum keyhybrid-server-* KeyHybrid_* > SHA256SUMS.txt
           cat SHA256SUMS.txt
 

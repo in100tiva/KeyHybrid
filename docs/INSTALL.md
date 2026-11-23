@@ -12,7 +12,7 @@ Baixe o instalador da última versão em [**Releases**](https://github.com/in100
 | `KeyHybrid_<versão>_x64-setup.exe` | Windows 10 / 11 (`x64`) | Instalador NSIS (recomendado para atualizar: encerra o gateway sozinho) |
 | `KeyHybrid_<versão>_x64_en-US.msi` | Windows 10 / 11 (`x64`) | Pacote MSI para implantação corporativa |
 
-> **Nota sobre versões de pré-release**: os instaladores desktop (`.deb`, `.msi` e `-setup.exe`) são publicados apenas nas releases estáveis (`vX.Y.Z`), pois o formato MSI exige versão puramente numérica. Tags de pré-release (como `v0.2.0-beta.1`) publicam somente os binários avulsos do gateway.
+Tags de pré-release (ex.: `v0.3.0-rc.1`) publicam só os binários do gateway: o `.msi` exige versão `X.Y.Z`.
 
 ### Conferir integridade e procedência
 

@@ -19,7 +19,7 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o 
 
 ### Alterado
 
-- **`workflow_dispatch` do `release.yml`**: disparos manuais passam a só ensaiar o build dos binários e instaladores (gerando os artifacts da execução), sem publicar uma release fora de tags `v*`.
+- **`workflow_dispatch` do `release.yml`**: disparos manuais passam a só ensaiar o build dos binários e instaladores (gerando os artifacts da execução), sem publicar uma release fora de tags `v*`; tags de pré-release publicam só o gateway.
 - **SvelteKit 3**: interface migrada de `@sveltejs/kit` 2.x para 3.4 e de `@sveltejs/adapter-static` 3.x para 4.x. A configuração deixou de ficar em `svelte.config.js` (arquivo removido) e passou para o plugin `sveltekit()` em `apps/desktop/vite.config.js`; o `tsconfig.json` agora estende o `$app/tsconfig` gerado pelo próprio kit.
 - `make check` e `make fmt` passam a cobrir o código Rust (`cargo fmt`), e o `docs/INSTALL.md` documenta o requisito de **Node.js 22.17+** e `pnpm` 10 no lugar de `npm`.
 - **Tokens de menor privilégio**: nenhum workflow declara permissão de escrita no nível do arquivo; `codeql.yml`, `container.yml`, `dependency-review.yml` e `release.yml` concentram a escrita apenas no job que realmente precisa dela, e os demais rodam com `contents: read`.
