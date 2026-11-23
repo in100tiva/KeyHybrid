@@ -61,7 +61,6 @@ flowchart LR
 - **Isolamento por alias (`kh-<alias>`)**: nenhuma ferramenta externa vê a chave real; o gateway descriptografa em RAM só no instante da chamada HTTPS.
 - **Criptografia dupla em repouso**: AES-256-GCM no SQLite com chave mestra local (`0600`) + DPAPI/Secret Service para credenciais e PIN, com `Zeroize` em Rust.
 - **Fallback de guardrail**: se a OpenRouter recusar um modelo (`HTTP 404`), o gateway reroteia para `openrouter/auto` sem quebrar o agente.
-- **Sexta-Feira (opcional)**: voz local (`faster-whisper`) e IoT Xiaomi na LAN, habilitada só quando há chave OpenRouter ativa.
 
 ## Quickstart
 
@@ -81,7 +80,7 @@ cd KeyHybrid
 .\run_windows.bat
 ```
 
-Pré-requisitos por distro, geração de instaladores (`.deb`, `.msi`) e o assistente de voz estão em **[docs/INSTALL.md](docs/INSTALL.md)**.
+Pré-requisitos por distro e geração de instaladores (`.deb`, `.msi`) estão em **[docs/INSTALL.md](docs/INSTALL.md)**.
 
 ## Usar o gateway
 
