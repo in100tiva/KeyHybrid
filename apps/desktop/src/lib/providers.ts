@@ -16,6 +16,7 @@ const PROVIDER_PREFIXES: [string, string][] = [
   ["sk-ant-", "anthropic"],
   ["sk-proj-", "openai"],
   ["sk-svcacct-", "openai"],
+  ["gsk_", "groq"],
   ["AIza", "gemini"],
   ["sbp_", "supabase"],
   ["ghp_", "github"],

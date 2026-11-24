@@ -34,7 +34,7 @@
 
   // Grupos do seletor de provedor (popover próprio; o select nativo sai branco no WebKitGTK)
   const PROVIDER_GROUPS = [
-    { label: "IA", items: ["openrouter", "gemini", "anthropic"] },
+    { label: "IA", items: ["openrouter", "gemini", "anthropic", "groq"] },
     { label: "Serviços", items: ["openai", "vercel", "supabase", "github", "outro"] },
   ];
 
