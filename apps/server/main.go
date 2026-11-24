@@ -757,45 +757,36 @@ func main() {
 				requestedAlias = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(a)), "kh-")
 				delete(payload, "alias")
 			}
+			headerProvider := strings.TrimSpace(evt.Request.Header.Get("X-Provider"))
 
-			if requestedAlias == "" && !tokenValid(evt.Request, cliToken) {
-				return evt.UnauthorizedError("Informe Authorization: Bearer kh-<alias>", nil)
+			if requestedAlias == "" && headerProvider == "" && !tokenValid(evt.Request, cliToken) {
+				return evt.UnauthorizedError("Informe Authorization: Bearer kh-<alias> ou X-Provider", nil)
 			}
 
 			allRecords, _ := app.FindAllRecords("vault_keys")
 			allRecords = onlyAI(allRecords)
-			var matchedRecord *core.Record
-
-			// 1. Tentar encontrar pelo alias solicitado
-			if requestedAlias != "" {
-				for _, r := range allRecords {
-					if strings.EqualFold(r.GetString("alias"), requestedAlias) {
-						matchedRecord = r
-						break
-					}
-				}
-				if matchedRecord == nil {
-					return evt.NotFoundError("Chave não encontrada: "+requestedAlias, nil)
-				}
-			} else {
-				// 2. Se não especificou alias, buscar a chave marcada como active = true
-				for _, r := range allRecords {
-					if r.GetBool("active") {
-						matchedRecord = r
-						break
-					}
-				}
-			}
-
-			if matchedRecord == nil {
+			if len(allRecords) == 0 {
 				return evt.BadRequestError(
 					"Nenhuma chave cadastrada no KeyHybrid. Adicione sua chave na interface do KeyHybrid.",
 					nil,
 				)
 			}
 
+			// Obter o modelo solicitado
+			requestedModel, _ := payload["model"].(string)
+
+			matchedRecord, cleanModel, provider := resolveAIProvider(
+				requestedAlias,
+				headerProvider,
+				requestedModel,
+				allRecords,
+			)
+
+			if matchedRecord == nil {
+				return evt.NotFoundError("Chave ou provedor não encontrado no cofre", nil)
+			}
+
 			secretKey := decryptSecretAtRest(matchedRecord.GetString("secret_key"))
-			provider := matchedRecord.GetString("provider")
 			baseURL := matchedRecord.GetString("base_url")
 			defaultModel := matchedRecord.GetString("default_model")
 
@@ -807,11 +798,13 @@ func main() {
 			}
 
 			// Garantir modelo padrão caso o cliente não tenha enviado
-			if modelVal, ok := payload["model"].(string); !ok || strings.TrimSpace(modelVal) == "" || modelVal == "google/gemini-2.0-flash-001" {
+			if cleanModel == "" || cleanModel == "google/gemini-2.0-flash-001" {
 				if defaultModel != "" && defaultModel != "google/gemini-2.0-flash-001" {
-					payload["model"] = defaultModel
+					cleanModel = defaultModel
+				} else if provider == ProviderAnthropic {
+					cleanModel = "claude-3-5-sonnet-20241022"
 				} else {
-					payload["model"] = "openrouter/auto"
+					cleanModel = "openrouter/auto"
 				}
 			}
 
@@ -820,11 +813,71 @@ func main() {
 				delete(payload, "provider")
 			}
 
-			targetURL := resolveProviderURL(provider, baseURL)
-			if strings.EqualFold(provider, "anthropic") && baseURL == "" {
-				payload["model"] = anthropicModel(payload["model"])
-			}
+			targetURL := resolveProviderChatURL(provider, baseURL)
 			isStream, _ := payload["stream"].(bool)
+
+			// 1. Tradução específica para Anthropic (/v1/messages)
+			if provider == ProviderAnthropic {
+				anthropicReq, trErr := translateOpenAIToAnthropic(payload, cleanModel)
+				if trErr != nil {
+					return evt.BadRequestError("Falha na tradução do payload para Anthropic", trErr)
+				}
+				reqBytes, mErr := json.Marshal(anthropicReq)
+				if mErr != nil {
+					return evt.InternalServerError("Falha ao serializar requisição Anthropic", mErr)
+				}
+
+				httpReq, rErr := http.NewRequestWithContext(
+					evt.Request.Context(),
+					http.MethodPost,
+					targetURL,
+					bytes.NewReader(reqBytes),
+				)
+				if rErr != nil {
+					return evt.InternalServerError("Falha ao criar requisição Anthropic", rErr)
+				}
+				httpReq.Header.Set("x-api-key", secretKey)
+				httpReq.Header.Set("anthropic-version", "2023-06-01")
+				httpReq.Header.Set("Content-Type", "application/json")
+
+				client := &http.Client{Timeout: 5 * time.Minute}
+				upstreamResp, err := client.Do(httpReq)
+				if err != nil {
+					return evt.InternalServerError("Erro de conexão com Anthropic", err)
+				}
+				defer upstreamResp.Body.Close()
+
+				if upstreamResp.StatusCode != http.StatusOK {
+					for k, v := range upstreamResp.Header {
+						evt.Response.Header()[k] = v
+					}
+					evt.Response.WriteHeader(upstreamResp.StatusCode)
+					_, _ = io.Copy(evt.Response, upstreamResp.Body)
+					return nil
+				}
+
+				if isStream {
+					return pipeAnthropicStreamToOpenAI(evt.Request.Context(), evt.Response, upstreamResp.Body, requestedModel)
+				}
+
+				bodyResp, readErr := io.ReadAll(upstreamResp.Body)
+				if readErr != nil {
+					return evt.InternalServerError("Falha ao ler resposta da Anthropic", readErr)
+				}
+				var antResp AnthropicResponse
+				if err := json.Unmarshal(bodyResp, &antResp); err != nil {
+					return evt.InternalServerError("Falha ao decodificar resposta da Anthropic", err)
+				}
+				openaiResp := translateAnthropicToOpenAI(&antResp, requestedModel)
+				return evt.JSON(http.StatusOK, openaiResp)
+			}
+
+			// 2. Provedores no padrão OpenAI (OpenAI, Groq, Gemini, OpenRouter)
+			if provider == ProviderOpenRouter {
+				payload["model"] = requestedModel
+			} else {
+				payload["model"] = cleanModel
+			}
 
 			doUpstream := func(bodyMap map[string]any) (*http.Response, error) {
 				forwardBytes, mErr := json.Marshal(bodyMap)
@@ -856,9 +909,9 @@ func main() {
 			}
 
 			// Se o modelo solicitado for bloqueado por Guardrail da OpenRouter (404), faz fallback inteligente para openrouter/auto
-			if upstreamResp.StatusCode == http.StatusNotFound && (provider == "openrouter" || provider == "") && payload["model"] != "openrouter/auto" {
+			if upstreamResp.StatusCode == http.StatusNotFound && (provider == ProviderOpenRouter || provider == "") && payload["model"] != "openrouter/auto" {
 				_ = upstreamResp.Body.Close()
-				requestedModel, _ := payload["model"].(string)
+				fallbackModel := cleanModel
 				payload["model"] = "openrouter/auto"
 				// Remove modalidades incompatíveis caso o fallback vá para modelo de texto/código permitido pelo guardrail
 				delete(payload, "modalities")
@@ -867,7 +920,7 @@ func main() {
 				if err != nil {
 					return evt.InternalServerError("Erro de conexão no fallback da OpenRouter", err)
 				}
-				evt.Response.Header().Set("X-KeyHybrid-Fallback-From", requestedModel)
+				evt.Response.Header().Set("X-KeyHybrid-Fallback-From", fallbackModel)
 				evt.Response.Header().Set("X-KeyHybrid-Fallback-To", "openrouter/auto")
 			}
 			defer upstreamResp.Body.Close()
@@ -1122,34 +1175,22 @@ func main() {
 			return err
 		})
 
-		// Listagem dos modelos permitidos pela chave do usuário -> GET /v1/models
+		// Listagem agregada dos modelos permitidos pelos provedores habilitados -> GET /v1/models
 		e.Router.GET("/v1/models", func(evt *core.RequestEvent) error {
-			secretKey, err := resolveVaultSecret(evt)
-			if err != nil {
-				return err
+			authHeader := strings.TrimSpace(evt.Request.Header.Get("Authorization"))
+			if authHeader == "" && !tokenValid(evt.Request, cliToken) {
+				return evt.UnauthorizedError("Informe Authorization: Bearer kh-<alias>", nil)
 			}
-			httpReq, err := http.NewRequestWithContext(
-				evt.Request.Context(),
-				http.MethodGet,
-				"https://openrouter.ai/api/v1/models/user",
-				nil,
-			)
-			if err != nil {
-				return evt.InternalServerError("Erro ao listar modelos", err)
+			allRecords, _ := app.FindAllRecords("vault_keys")
+			allRecords = onlyAI(allRecords)
+			if len(allRecords) == 0 {
+				return evt.JSON(http.StatusOK, ModelListResponse{
+					Object: "list",
+					Data:   []ModelData{},
+				})
 			}
-			httpReq.Header.Set("Authorization", "Bearer "+secretKey)
-			client := &http.Client{Timeout: 30 * time.Second}
-			resp, err := client.Do(httpReq)
-			if err != nil {
-				return evt.InternalServerError("Erro na consulta de modelos", err)
-			}
-			defer resp.Body.Close()
-			for k, v := range resp.Header {
-				evt.Response.Header()[k] = v
-			}
-			evt.Response.WriteHeader(resp.StatusCode)
-			_, err = io.Copy(evt.Response, resp.Body)
-			return err
+			modelsResp := aggregateEnabledModels(evt.Request.Context(), allRecords)
+			return evt.JSON(http.StatusOK, modelsResp)
 		})
 
 		return e.Next()
