@@ -13,17 +13,78 @@ Funciona em qualquer SDK compatível com a API da OpenAI — basta trocar a base
 
 ## Chat / Completions
 
+O endpoint `/v1/chat/completions` suporta **múltiplos provedores** nativamente (`anthropic`, `gemini`, `groq`, `openai`, `openrouter`).
+
+### 1. Seleção de Provedor
+
+Você pode selecionar o provedor de três formas, com a seguinte precedência:
+1. **Pelo header `X-Provider`:** ex.: `-H "X-Provider: anthropic"`
+2. **Pelo prefixo no model ID:** ex.: `"model": "anthropic/claude-3-5-sonnet"`, `"model": "groq/llama-3.3-70b-versatile"`, `"model": "gemini/gemini-2.0-flash"`
+3. **Pelo token virtual de alias:** ex.: `Authorization: Bearer kh-anthropic`
+4. **Fallback padrão (default):** Se nenhum prefixo ou header for informado, o gateway envia para o provedor ativo (`active: true`) no cofre (ex.: OpenRouter), mantendo 100% de retrocompatibilidade.
+
+### 2. Conversando com a Anthropic pelo SDK oficial da OpenAI
+
+O gateway traduz automaticamente o dialeto da OpenAI para a API nativa da Anthropic (`/v1/messages`), incluindo mensagens de sistema, alternância de turnos, contagem de tokens e streaming SSE.
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://127.0.0.1:8090/v1",
+    api_key="kh-default", # ou kh-anthropic
+)
+
+response = client.chat.completions.create(
+    model="anthropic/claude-3-5-sonnet",
+    messages=[
+        {"role": "system", "content": "Você é um assistente técnico."},
+        {"role": "user", "content": "Explique o funcionamento do KeyHybrid."}
+    ],
+    temperature=0.7,
+)
+
+print(response.choices[0].message.content)
+```
+
+Ou com streaming em tempo real:
+
+```python
+stream = client.chat.completions.create(
+    model="anthropic/claude-3-5-sonnet",
+    messages=[{"role": "user", "content": "Escreva um poema curto sobre segurança."}],
+    stream=True,
+)
+
+for chunk in stream:
+    if chunk.choices[0].delta.content:
+        print(chunk.choices[0].delta.content, end="", flush=True)
+```
+
+### 3. Chamada via cURL
+
 ```bash
 curl http://127.0.0.1:8090/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer kh-openrouter" \
   -d '{
-    "model": "openrouter/auto",
+    "model": "anthropic/claude-3-5-sonnet",
     "messages": [
       {"role": "user", "content": "Explique a arquitetura Zero-Knowledge do KeyHybrid."}
     ]
   }'
 ```
+
+## Listagem de Modelos (`/v1/models`)
+
+O endpoint `GET /v1/models` agrega automaticamente todos os modelos disponíveis nos provedores configurados e habilitados no seu cofre:
+
+```bash
+curl http://127.0.0.1:8090/v1/models \
+  -H "Authorization: Bearer kh-default"
+```
+
+A resposta retorna a lista no padrão OpenAI contendo os IDs prefixados (ex.: `anthropic/claude-3-5-sonnet`, `gemini/gemini-2.0-flash`, `groq/llama-3.3-70b-versatile`) e os modelos do provedor default também sem prefixo.
 
 ## Text-to-Speech
 
@@ -87,7 +148,7 @@ A prévia mostra, para cada chave reconhecida, o apelido, o provedor e os 4 últ
 | `VERCEL_TOKEN` | serviço · `vercel` |
 
 - O prefixo da chave vence o nome da variável: `OPENAI_API_KEY=sk-or-…` entra como OpenRouter. A chave só vai para quem a emitiu.
-- A OpenAI entra como serviço porque o `/v1` ainda não tem rota própria para ela ([#17](https://github.com/in100tiva/KeyHybrid/issues/17)): use `kh run` ou o proxy.
+- A chave de OpenAI (`OPENAI_API_KEY`) pode ser usada tanto diretamente pelo gateway `/v1` quanto como serviço via `kh run` e `/proxy`.
 - Apelido já usado no cofre não é sobrescrito (a chave nova vira `openai-2`), e a chave ativa continua a mesma.
 - O que não é chave conhecida continua só no `.env` e aparece na prévia como "ficam no .env".
 
