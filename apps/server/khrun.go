@@ -83,7 +83,7 @@ func runCmd(args []string) int {
 	if code != 0 {
 		return code
 	}
-	secrets, code := revealSecrets(gw, token, aliases)
+	secrets, code := revealSecrets(os.Stderr, gw, token, aliases)
 	if code != 0 {
 		return code
 	}
@@ -162,7 +162,7 @@ func gatewayAndToken(cmd string) (string, string, int) {
 	}
 	tokBytes, err := os.ReadFile(cliTokenPath())
 	if err != nil {
-		fmt.Fprintln(os.Stderr, cmd+": token local ausente; abra o KeyHybrid uma vez")
+		fmt.Fprintln(os.Stderr, cmd+": token local ausente em", cliTokenPath()+". "+khSobeServico)
 		return "", "", 1
 	}
 	return strings.TrimRight(gw, "/"), strings.TrimSpace(string(tokBytes)), 0
@@ -175,19 +175,21 @@ func khClient() *http.Client {
 	}
 }
 
-// Chama o gateway local; o token vai no cabeçalho e nunca é impresso
-func revealSecrets(gw, token string, aliases []string) (map[string]string, int) {
+const khSobeServico = "Suba o serviço: systemctl --user start keyhybrid.service (ou abra o app KeyHybrid)."
+
+// Chama o gateway local; o token vai no cabeçalho e nunca é impresso. Erros saem em w com o próximo passo.
+func revealSecrets(w io.Writer, gw, token string, aliases []string) (map[string]string, int) {
 	body, _ := json.Marshal(map[string][]string{"aliases": aliases})
 	req, err := http.NewRequest(http.MethodPost, gw+"/api/keyhybrid/reveal", bytes.NewReader(body))
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "kh run: gateway inválido")
+		fmt.Fprintln(w, "kh run: gateway inválido")
 		return nil, 2
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-KeyHybrid-Token", token)
 	resp, err := khClient().Do(req)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "kh run: KeyHybrid não está respondendo em", gw)
+		fmt.Fprintf(w, "kh run: KeyHybrid não está respondendo em %s. %s\n", gw, khSobeServico)
 		return nil, 1
 	}
 	defer resp.Body.Close()
@@ -199,7 +201,7 @@ func revealSecrets(gw, token string, aliases []string) (map[string]string, int) 
 			Secrets map[string]string `json:"secrets"`
 		}
 		if json.Unmarshal(raw, &out) != nil {
-			fmt.Fprintln(os.Stderr, "kh run: resposta inesperada do gateway")
+			fmt.Fprintln(w, "kh run: resposta inesperada do gateway; veja o log: journalctl --user -u keyhybrid.service -n 50")
 			return nil, 1
 		}
 		return out.Secrets, 0
@@ -208,15 +210,42 @@ func revealSecrets(gw, token string, aliases []string) (map[string]string, int) 
 			Missing []string `json:"missing"`
 		}
 		_ = json.Unmarshal(raw, &out)
-		fmt.Fprintln(os.Stderr, "kh run: alias não cadastrado:", strings.Join(out.Missing, ", "))
+		fmt.Fprintln(w, "kh run: alias não cadastrado:", strings.Join(out.Missing, ", "))
+		// nil = listagem falhou (não afirma nada); vazio = cofre sem alias
+		if cad := listAliases(khClient(), gw); len(cad) > 0 {
+			fmt.Fprintln(w, "  cadastrados:", strings.Join(cad, ", "))
+		} else if cad != nil {
+			fmt.Fprintln(w, "  nenhum alias cadastrado")
+		}
+		fmt.Fprintln(w, "  cadastre no app KeyHybrid (Provedor → grupo Serviços) ou corrija o nome no -e")
 		return nil, 1
 	case http.StatusUnauthorized:
-		fmt.Fprintln(os.Stderr, "kh run: token recusado; reinicie o KeyHybrid")
+		fmt.Fprintln(w, "kh run: token recusado: o token local mudou (o gateway reiniciou?). Rode o comando de novo; se continuar: systemctl --user restart keyhybrid.service")
 		return nil, 1
 	default:
-		fmt.Fprintln(os.Stderr, "kh run: gateway respondeu HTTP", resp.StatusCode)
+		fmt.Fprintf(w, "kh run: gateway respondeu HTTP %d; veja o log: journalctl --user -u keyhybrid.service -n 50\n", resp.StatusCode)
 		return nil, 1
 	}
+}
+
+// Só os nomes dos aliases, sem token: a listagem não precisa dele e nada além do alias é lido
+func listAliases(client *http.Client, gw string) []string {
+	resp, err := client.Get(gw + "/api/keyhybrid/keys")
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	var keys []struct {
+		Alias string `json:"alias"`
+	}
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&keys) != nil {
+		return nil
+	}
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, k.Alias)
+	}
+	return out
 }
 
 func isTerminal(f *os.File) bool {
