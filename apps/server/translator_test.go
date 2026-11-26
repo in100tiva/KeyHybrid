@@ -269,6 +269,15 @@ func TestResolveAIProvider_Precedence(t *testing.T) {
 	if recOnlyOR != rOpenRouter || provOnlyOR != ProviderOpenRouter {
 		t.Errorf("Fallback sem chave anthropic falhou: rec=%v, prov=%s", recOnlyOR, provOnlyOR)
 	}
+
+	// 6. Alias explícito inexistente não cai na chave ativa (#43)
+	if rec, _, prov = resolveAIProvider("errado", "", "gpt-4o", allRecords); rec != nil || prov != "" {
+		t.Errorf("Alias inexistente caiu em fallback: rec=%v, prov=%s", rec, prov)
+	}
+	// 7. kh-default continua indo para a chave ativa
+	if rec, _, _ = resolveAIProvider("default", "", "gpt-4o", allRecords); rec != rOpenRouter {
+		t.Errorf("default não selecionou a chave ativa: rec=%v", rec)
+	}
 }
 
 func TestAggregateEnabledModels(t *testing.T) {

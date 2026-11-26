@@ -66,6 +66,9 @@ func isServiceKey(rec *core.Record) bool {
 	return rec.GetString("kind") == "service"
 }
 
+// Erro de controle: a rota /v1 já respondeu (401/404) e o chamador só precisa parar.
+var errV1Respondido = errors.New("resposta /v1 já enviada")
+
 // Só chave de IA: usada por /v1 e auto-ativação
 func onlyAI(recs []*core.Record) []*core.Record {
 	var out []*core.Record
@@ -750,17 +753,15 @@ func main() {
 
 		// Helper para resolver a chave secreta real a partir do token virtual Bearer kh-<alias>
 		resolveVaultSecret := func(evt *core.RequestEvent) (string, error) {
-			authHeader := strings.TrimSpace(evt.Request.Header.Get("Authorization"))
-			requestedAlias := ""
-			if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
-				requestedAlias = strings.TrimSpace(authHeader[7:])
-				requestedAlias = strings.TrimPrefix(strings.ToLower(requestedAlias), "kh-")
-			}
-			if requestedAlias == "" && !tokenValid(evt.Request, cliToken) {
-				return "", evt.UnauthorizedError("Informe Authorization: Bearer kh-<alias>", nil)
-			}
 			allRecords, _ := app.FindAllRecords("vault_keys")
 			allRecords = onlyAI(allRecords)
+			requestedAlias, st, errBody := v1Auth(evt.Request, cliToken, allRecords)
+			if st != 0 {
+				if err := evt.JSON(st, errBody); err != nil {
+					return "", err
+				}
+				return "", errV1Respondido // resposta já escrita: o PocketBase ignora o erro
+			}
 			var matchedRecord *core.Record
 			if requestedAlias != "" {
 				for _, r := range allRecords {
@@ -768,9 +769,6 @@ func main() {
 						matchedRecord = r
 						break
 					}
-				}
-				if matchedRecord == nil {
-					return "", evt.NotFoundError("Chave não encontrada: "+requestedAlias, nil)
 				}
 			} else {
 				for _, r := range allRecords {
@@ -970,12 +968,11 @@ func main() {
 
 		// Listagem agregada dos modelos permitidos pelos provedores habilitados -> GET /v1/models
 		e.Router.GET("/v1/models", func(evt *core.RequestEvent) error {
-			authHeader := strings.TrimSpace(evt.Request.Header.Get("Authorization"))
-			if authHeader == "" && !tokenValid(evt.Request, cliToken) {
-				return evt.UnauthorizedError("Informe Authorization: Bearer kh-<alias>", nil)
-			}
 			allRecords, _ := app.FindAllRecords("vault_keys")
 			allRecords = onlyAI(allRecords)
+			if _, st, errBody := v1Auth(evt.Request, cliToken, allRecords); st != 0 {
+				return evt.JSON(st, errBody)
+			}
 			if len(allRecords) == 0 {
 				return evt.JSON(http.StatusOK, ModelListResponse{
 					Object: "list",
@@ -1157,25 +1154,22 @@ func proxyChat(app core.App, cliToken string) func(*core.RequestEvent) error {
 			return evt.BadRequestError("JSON inválido", err)
 		}
 
-		// Extrair alias do Header Authorization: Bearer <alias_ou_kh-alias> ou do próprio JSON
-		authHeader := strings.TrimSpace(evt.Request.Header.Get("Authorization"))
-		requestedAlias := ""
-		if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
-			requestedAlias = strings.TrimSpace(authHeader[7:])
-			requestedAlias = strings.TrimPrefix(strings.ToLower(requestedAlias), "kh-")
+		allRecords, _ := app.FindAllRecords("vault_keys")
+		allRecords = onlyAI(allRecords)
+
+		// Alias pelo Authorization: Bearer kh-<alias> ou pelo campo "alias" do JSON
+		requestedAlias, st, errBody := v1Auth(evt.Request, cliToken, allRecords)
+		if st != 0 {
+			return evt.JSON(st, errBody)
 		}
 		if a, ok := payload["alias"].(string); ok && a != "" {
-			requestedAlias = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(a)), "kh-")
+			requestedAlias, st, errBody = v1Alias(strings.TrimPrefix(strings.ToLower(strings.TrimSpace(a)), "kh-"), allRecords)
+			if st != 0 {
+				return evt.JSON(st, errBody)
+			}
 			delete(payload, "alias")
 		}
 		headerProvider := strings.TrimSpace(evt.Request.Header.Get("X-Provider"))
-
-		if requestedAlias == "" && headerProvider == "" && !tokenValid(evt.Request, cliToken) {
-			return evt.UnauthorizedError("Informe Authorization: Bearer kh-<alias> ou X-Provider", nil)
-		}
-
-		allRecords, _ := app.FindAllRecords("vault_keys")
-		allRecords = onlyAI(allRecords)
 		if len(allRecords) == 0 {
 			return evt.BadRequestError(
 				"Nenhuma chave cadastrada no KeyHybrid. Adicione sua chave na interface do KeyHybrid.",
