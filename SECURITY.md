@@ -55,6 +55,8 @@ Dois alertas do Dependabot seguem abertos de forma **consciente**: em ambos não
 
 Se você encontrar um caminho de exploração real para qualquer um dos dois, trate como vulnerabilidade e siga o [canal privado](#como-reportar-uma-vulnerabilidade).
 
+O CI roda `govulncheck` (Go) e `cargo audit` (Rust) em todo pull request: vulnerabilidade nova reprova o PR; os avisos de manutenção abaixo aparecem só no log. O `glib` acima entra no `cargo audit` como aviso `unsound` (RUSTSEC-2024-0429), não como falha.
+
 ### Avisos de crate sem manutenção (informativos)
 
 O RUSTSEC também sinaliza crates **sem mantenedor ativo** que entram de forma transitiva pelo stack GTK/WebKit do Tauri: `chrono`, `proc-macro-error`, `zbus_names`, `zvariant` e `zvariant_derive`. Não existe versão corrigida publicada — são avisos de manutenção, não falhas exploráveis descritas. Eles continuam visíveis no `cargo audit`/OSV e serão resolvidos quando o Tauri migrar para a próxima geração do `gtk-rs`; até lá o Dependabot mantém o restante do lockfile atualizado.

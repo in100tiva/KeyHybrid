@@ -158,7 +158,7 @@ Guia completo em **[docs/INSTALL.md](docs/INSTALL.md)**.
 
 | Item | Status |
 | --- | --- |
-| CI (Go + Rust + SvelteKit) | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — `gofmt`, `go vet`, `go build`, `go test -race`, `svelte-check`, build estático, `cargo fmt --check` e `cargo clippy -D warnings` |
+| CI (Go + Rust + SvelteKit) | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — `gofmt`, `go vet`, `go build`, `go test -race`, `govulncheck`, `svelte-check`, build estático, `cargo fmt --check`, `cargo clippy -D warnings` e `cargo audit` |
 | Revisão de dependências | [`.github/workflows/dependency-review.yml`](.github/workflows/dependency-review.yml) — barra PRs que adicionam dependências com severidade alta |
 | Releases automatizadas | [`.github/workflows/release.yml`](.github/workflows/release.yml) — binários cross-compiled, checksums e notas de release categorizadas por tag `v*` |
 | Procedência dos artefatos | Build provenance assinado pelo GitHub (`actions/attest-build-provenance`) em cada binário e checksum — ver [SECURITY.md](SECURITY.md#verificação-de-artefatos) |

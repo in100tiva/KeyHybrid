@@ -50,6 +50,12 @@ jobs:
       - name: go test
         run: go test -race ./...
 
+      # Barra vulnerabilidade conhecida em código alcançável (Go e dependências).
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.10.0
+          "$(go env GOPATH)/bin/govulncheck" ./...
+
   desktop:
     name: Interface (SvelteKit 3)
     runs-on: ubuntu-latest
@@ -128,3 +134,10 @@ jobs:
 
       - name: cargo test
         run: cargo test --locked
+
+      # Barra crate com vulnerabilidade publicada no RustSec (avisos de
+      # unmaintained/unsound/yanked só aparecem no log).
+      - name: cargo audit
+        run: |
+          cargo install cargo-audit --locked --version 0.23.0
+          cargo audit
