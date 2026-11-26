@@ -30,6 +30,8 @@
   let keys = $state<KeySafeView[]>([]);
   // Chave escolhida na lista (serviço não ativa, então precisa disso para aparecer no passo 2)
   let viewedKeyId = $state("");
+  // Chave aguardando confirmação de exclusão (um clique só não apaga segredo)
+  let deletingId = $state<string | null>(null);
   let selectedKey = $derived(
     keys.find((k) => k.id === viewedKeyId) ||
       keys.find((k) => k.active) ||
@@ -277,6 +279,7 @@
 
   // Remover chave ativa ou específica
   async function handleDeleteKey(k: KeySafeView) {
+    deletingId = null;
     try {
       await invoke("delete_vault_key", {
         gatewayUrl,
@@ -346,7 +349,12 @@
     restoreResult = null;
   }
 
-  function onBackupKey(e: KeyboardEvent) {
+  function onWindowKey(e: KeyboardEvent) {
+    // Esc cancela a exclusão pendente sem apagar nada
+    if (e.key === "Escape" && deletingId) {
+      deletingId = null;
+      return;
+    }
     // Durante a operação, Esc não troca a tela por baixo do resultado
     if (!backupOpen || e.key !== "Escape" || backupBusy) return;
     if (backupStep === "inicio") closeBackup();
@@ -745,7 +753,7 @@
   });
 </script>
 
-<svelte:window onpointerdown={onWindowPointerDown} onkeydown={onBackupKey} ondragover={blockFileDrop} ondrop={blockFileDrop} />
+<svelte:window onpointerdown={onWindowPointerDown} onkeydown={onWindowKey} ondragover={blockFileDrop} ondrop={blockFileDrop} />
 
 <!-- FILTRO SVG DE DISTORÇÃO LÍQUIDA ESTILO MACOS GENIE -->
 <svg class="genie-svg-defs" width="0" height="0" aria-hidden="true">
@@ -1234,16 +1242,40 @@
                     {:else}
                       <span class="linked-tag">{k.provider}</span>
                     {/if}
-                    <button
-                      class="del-micro"
-                      onclick={(e) => {
-                        e.stopPropagation();
-                        handleDeleteKey(k);
-                      }}
-                      title="Remover chave"
-                    >
-                      ×
-                    </button>
+                    {#if deletingId === k.id}
+                      <span class="del-ask" title={k.alias}>Excluir '{k.alias}'?</span>
+                      <button
+                        class="del-confirm"
+                        onclick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteKey(k);
+                        }}
+                      >
+                        Confirmar
+                      </button>
+                      <button
+                        class="del-cancel"
+                        use:focusTitle
+                        onclick={(e) => {
+                          e.stopPropagation();
+                          deletingId = null;
+                        }}
+                      >
+                        Cancelar
+                      </button>
+                    {:else}
+                      <button
+                        class="del-micro"
+                        onclick={(e) => {
+                          e.stopPropagation();
+                          deletingId = k.id;
+                        }}
+                        title="Remover chave"
+                        aria-label="Remover chave {k.alias}"
+                      >
+                        ×
+                      </button>
+                    {/if}
                   </div>
                 </div>
               {/each}
@@ -2317,6 +2349,39 @@
 
   .del-micro:hover {
     color: #f87171;
+  }
+
+  .del-ask {
+    font-size: 11px;
+    color: #f87171;
+    max-width: 120px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .del-confirm,
+  .del-cancel {
+    background: none;
+    border: 1px solid #3f3f46;
+    border-radius: 6px;
+    color: #d4d4d8;
+    font-size: 11px;
+    padding: 1px 6px;
+    cursor: pointer;
+  }
+
+  .del-confirm {
+    border-color: #7f1d1d;
+    color: #f87171;
+  }
+
+  .del-confirm:hover {
+    background: rgba(248, 113, 113, 0.12);
+  }
+
+  .del-cancel:hover {
+    background: rgba(255, 255, 255, 0.06);
   }
 
   .col-footer-meta {
