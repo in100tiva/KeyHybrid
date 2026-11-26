@@ -4,7 +4,7 @@
   import { SERVICES, detectProvider } from "../lib/providers.ts";
   import { importRows, khRunCommand, planImport } from "../lib/envImport.ts";
   import type { ImportRow } from "../lib/envImport.ts";
-  import { canConfirmReplace, defaultBackupName, formatBackupDate, passphraseStrength, validatePassphrase } from "../lib/backup.ts";
+  import { backupReminder, canConfirmReplace, defaultBackupName, formatBackupDate, passphraseStrength, validatePassphrase } from "../lib/backup.ts";
   import type { BackupPreview, BackupResult, BackupStatus, RestoreResult } from "../lib/backup.ts";
   import { textoSelagem } from "../lib/selagem.ts";
 
@@ -95,6 +95,8 @@
   let backupBusy = $state(false);
   let backupProgress = $state("");
   let backupTitle = $state<HTMLElement | null>(null);
+  // Lembrete da tela principal (#53). shortcut: os dias só se recalculam quando o status recarrega (abrir o app ou fazer backup)
+  let reminder = $derived(backupStatus ? backupReminder(backupStatus.last_backup?.at, new Date()) : null);
   let restorePath = $state("");
   let restorePreview = $state<BackupPreview | null>(null);
   let restoreMode = $state<"merge" | "replace">("merge");
@@ -708,6 +710,7 @@
   onMount(() => {
     syncVault();
     checkPinStatus();
+    void loadBackupStatus();
 
     // 1. Fase inicial: apenas a constelação flutuando sem fundo preto (1.35s)
     // 2. Fase Genie: a janela abre com a distorção estilo macOS (0.68s)
@@ -1175,6 +1178,15 @@
           Armazene suas chaves e use qualquer modelo no terminal ou Antigravity sem expor credenciais
         </p>
       </div>
+
+      {#if reminder}
+        <!-- Lembrete de backup (#53): o texto diz o estado; a cor só reforça -->
+        <div class="backup-reminder" class:alert={reminder.alert}>
+          {#if reminder.alert}<span aria-hidden="true">⚠</span>{/if}
+          <span>{reminder.text}</span>
+          <button class="inline-link" onclick={openBackup}>Fazer backup</button>
+        </div>
+      {/if}
 
       <!-- CONTAINER INTERNO DUPLO (EXATAMENTE COMO STEP 1 / STEP 2 DO PLAN WISE) -->
       <div class="inner-board">
@@ -2099,6 +2111,29 @@
     color: #71717a;
     line-height: 1.42;
     max-width: 310px;
+  }
+
+  /* Lembrete de backup (#53): discreto; em alerta ganha borda e texto âmbar (contraste AA sobre o fundo) */
+  .backup-reminder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin: -6px 0 10px;
+    padding: 5px 10px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    font-size: 11.5px;
+    color: #a1a1aa;
+  }
+  .backup-reminder.alert {
+    border-color: rgba(251, 191, 36, 0.45);
+    background: rgba(251, 191, 36, 0.08);
+    color: #fbbf24;
+  }
+  .backup-reminder .inline-link:focus-visible {
+    outline: 2px solid #a3e635;
+    outline-offset: 2px;
   }
 
   /* QUADRO INTERNO BIPARTIDO (PLAN WISE) */

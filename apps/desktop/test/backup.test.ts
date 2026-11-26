@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 // @ts-expect-error sem @types/node
 import { readFileSync } from "node:fs";
 import {
+  backupReminder,
   canConfirmReplace,
   defaultBackupName,
   formatBackupDate,
@@ -61,6 +62,22 @@ test("a data do último backup aparece formatada, e data inválida não quebra",
   assert.equal(formatBackupDate("não é data"), "data inválida");
 });
 
+test("lembrete de backup: nunca e 7+ dias pedem destaque; 0 a 6 dias não", () => {
+  const agora = new Date("2026-11-26T12:00:00Z");
+  const ha = (dias: number, horas = 0) => new Date(agora.getTime() - (dias * 24 + horas) * 3600_000).toISOString();
+  assert.deepEqual(backupReminder(null, agora), { text: "Nenhum backup .khvault ainda.", alert: true });
+  assert.deepEqual(backupReminder(undefined, agora), { text: "Nenhum backup .khvault ainda.", alert: true });
+  assert.deepEqual(backupReminder("não é data", agora), { text: "Nenhum backup .khvault ainda.", alert: true });
+  assert.deepEqual(backupReminder(ha(0), agora), { text: "Último backup .khvault: hoje.", alert: false });
+  assert.deepEqual(backupReminder(ha(1), agora), { text: "Último backup .khvault: há 1 dia.", alert: false });
+  // 6 dias e 23 h ainda são 6 dias completos
+  assert.deepEqual(backupReminder(ha(6, 23), agora), { text: "Último backup .khvault: há 6 dias.", alert: false });
+  assert.deepEqual(backupReminder(ha(7), agora), { text: "Último backup .khvault: há 7 dias. Faça um novo.", alert: true });
+  assert.equal(backupReminder(ha(30), agora).alert, true);
+  // Relógio adiantado: backup "no futuro" conta como hoje
+  assert.deepEqual(backupReminder(ha(-2), agora), { text: "Último backup .khvault: hoje.", alert: false });
+});
+
 test("as funções puras não usam armazenamento, console nem rede", async () => {
   const g = globalThis as unknown as Record<string, unknown>;
   const original = { console: g.console, fetch: g.fetch, ls: g.localStorage, ss: g.sessionStorage };
@@ -89,6 +106,7 @@ test("as funções puras não usam armazenamento, console nem rede", async () =>
     validatePassphrase("abcdefghijkl", "abcdefghijkl");
     canConfirmReplace("SUBSTITUIR");
     formatBackupDate("2026-11-26T15:00:00Z");
+    backupReminder("2026-11-26T15:00:00Z", new Date());
   } finally {
     g.console = original.console;
     g.fetch = original.fetch;
