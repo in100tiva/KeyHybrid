@@ -8,8 +8,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -444,6 +446,20 @@ func liberarAuthorizationProprio(r *router.Router[*core.RequestEvent]) {
 	r.Unbind(apis.DefaultRejectUnknownTokenMiddlewareId)
 }
 
+// Abre a porta ANTES de rotacionar o token local (#37). O PocketBase só faz o net.Listen
+// depois dos handlers de OnServe: sem isto, uma segunda instância que ia falhar no bind
+// sobrescrevia o .cli.token da instância que está atendendo e o kh run passava a ser recusado.
+func reservarPortaEToken(e *core.ServeEvent) (string, error) {
+	if e.Server != nil && e.Listener == nil && e.Server.Addr != "" {
+		ln, err := net.Listen("tcp", e.Server.Addr)
+		if err != nil {
+			return "", fmt.Errorf("porta %s ocupada (outro KeyHybrid já está rodando?); token local mantido: %w", e.Server.Addr, err)
+		}
+		e.Listener = ln // o PocketBase usa este listener no lugar do próprio
+	}
+	return loadOrCreateCLIToken(), nil
+}
+
 func main() {
 	// "run" é o kh run: não pode abrir pb_data ao lado do binário
 	if len(os.Args) > 1 && os.Args[1] == "run" {
@@ -479,7 +495,10 @@ func main() {
 			e.Server.ReadTimeout = 30 * time.Second
 			e.Server.IdleTimeout = 60 * time.Second
 		}
-		cliToken := loadOrCreateCLIToken()
+		cliToken, err := reservarPortaEToken(e)
+		if err != nil {
+			return err
+		}
 		liberarAuthorizationProprio(e.Router)
 
 		// Configurar CORS estrito do PocketBase (anti CSRF / Origin evil)
