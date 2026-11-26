@@ -8,7 +8,7 @@ rem O Tauri empacota o servidor como recurso; sem o binario o build falha.
 if not exist "apps\server\keyhybrid-server.exe" (
     echo [KeyHybrid] Compilando keyhybrid-server.exe...
     pushd apps\server
-    go build -trimpath -buildvcs=false -ldflags="-s -w" -o keyhybrid-server.exe .
+    go build -tags no_ui -trimpath -buildvcs=false -ldflags="-s -w" -o keyhybrid-server.exe .
     popd
 )
 cd apps\desktop

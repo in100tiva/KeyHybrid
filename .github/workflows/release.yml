@@ -45,7 +45,7 @@ jobs:
           ext=""
           if [ "${{ matrix.goos }}" = "windows" ]; then ext=".exe"; fi
           mkdir -p dist
-          go build -trimpath -buildvcs=false \
+          go build -tags no_ui -trimpath -buildvcs=false \
             -ldflags "-s -w -X main.version=${GITHUB_REF_NAME#v}" \
             -o "dist/${name}${ext}" .
 

@@ -41,3 +41,56 @@ func TestAuthorizationProprioNaoViraUnauthorized(t *testing.T) {
 		t.Fatalf("com liberar: status %d, esperado 204", got)
 	}
 }
+
+// Painel /_/ e APIs nativas do PocketBase ficam fora do gateway (issue #46).
+func TestRotasNativasDoPocketBaseRespondem404(t *testing.T) {
+	app := abrirVaultEm(t, t.TempDir())
+	r, err := apis.NewRouter(app) // registra /api/collections, /api/superusers, /api/health...
+	if err != nil {
+		t.Fatalf("NewRouter: %v", err)
+	}
+	bloquearRotasNativas(r)
+	ok := func(e *core.RequestEvent) error { return e.NoContent(http.StatusNoContent) }
+	r.GET("/_/{path...}", ok) // o Serve registra o painel quando o build não usa no_ui
+	r.GET("/api/keyhybrid/health", ok)
+	r.GET("/v1/models", ok)
+	r.Any("/proxy/{alias}/{path...}", ok)
+	mux, err := r.BuildMux()
+	if err != nil {
+		t.Fatalf("BuildMux: %v", err)
+	}
+
+	casos := map[string]bool{ // caminho -> deve responder 404
+		"/_/":                                  true,
+		"/_/images/logo.svg":                   true,
+		"/api/collections":                     true,
+		"/api/collections/vault_keys/records":  true,
+		"/api/superusers":                      true,
+		"/api/collections/_superusers/records": true,
+		"/api/keyhybrid/health":                false,
+		"/api/health":                          false,
+		"/v1/models":                           false,
+		"/proxy/supabase/v1/projects":          false,
+	}
+	for caminho, quer404 := range casos {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, caminho, nil))
+		if (rec.Code == http.StatusNotFound) != quer404 {
+			t.Errorf("%s: status %d, quer404=%v", caminho, rec.Code, quer404)
+		}
+	}
+}
+
+func TestRotaPermitida(t *testing.T) {
+	for p, quer := range map[string]bool{
+		"/v1": true, "/v1/chat/completions": true, "/api/ai/proxy/chat": true,
+		"/api/keyhybrid/reveal": true, "/proxy/a/b": true, "/api/health": true,
+		"/v1x": false, "/api/keyhybrid": false, "/proxyx/a": false,
+		"/_/": false, "/api/files/x": false, "/api/realtime": false, "": false,
+		"/api/keyhybrid/" + ".." + "/superusers": false,
+	} {
+		if got := rotaPermitida(p); got != quer {
+			t.Errorf("rotaPermitida(%q) = %v, quer %v", p, got, quer)
+		}
+	}
+}

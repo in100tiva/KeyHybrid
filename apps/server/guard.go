@@ -64,6 +64,22 @@ var allowedOrigins = map[string]bool{
 	"http://127.0.0.1:1420":   true,
 }
 
+// rotaPermitida diz se o caminho é do gateway: /api/keyhybrid/*, /v1/*, /proxy/*, o chat
+// legado /api/ai/proxy/chat e o /api/health do healthcheck do container.
+func rotaPermitida(p string) bool {
+	p = path.Clean("/" + p)
+	switch p {
+	case "/v1", "/api/health", "/api/ai/proxy/chat":
+		return true
+	}
+	for _, prefixo := range []string{"/api/keyhybrid/", "/v1/", "/proxy/"} {
+		if strings.HasPrefix(p, prefixo) {
+			return true
+		}
+	}
+	return false
+}
+
 // Barra DNS rebinding: o Host precisa ser loopback
 func hostAllowed(host string) bool {
 	name := host
