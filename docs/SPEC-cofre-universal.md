@@ -55,8 +55,9 @@ Regras de cadastro (`POST /api/keyhybrid/keys`) para `service`:
 - **C2 (F3)** — toda busca de chave para IA (`proxyChatHandler`, `resolveVaultSecret`,
   auto-ativação do `GET /keys`) só enxerga `kind != "service"`.
   `POST /keys/{id}/activate` recusa chave de serviço (`400`).
-- **C3** — `GET /keys` devolve também `kind`, `base_url` e `auth_header` (nada disso é
-  segredo); `virtual_token` fica vazio para `service`.
+- **C3** — `GET /keys` devolve também `kind`, `base_url` e `auth_header`; `virtual_token`
+  fica vazio para `service`. Sem o token local (#47) a listagem traz só `id`, `alias` e
+  `kind`: `base_url` e `auth_header` dariam o mapa de uso das chaves a qualquer processo.
 - **C4** — `go.mod`: `go 1.27` → `go 1.27.0` (com `go 1.27` o download automático do
   toolchain falha: "toolchain not available").
 

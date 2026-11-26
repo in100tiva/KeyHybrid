@@ -62,6 +62,14 @@ type KeySafeView struct {
 	AuthHeader   string `json:"auth_header"`
 }
 
+// O que a listagem mostra sem token: provider, base_url e auth_header dariam
+// a qualquer processo local o mapa de como usar cada chave.
+type KeyPublicView struct {
+	Id    string `json:"id"`
+	Alias string `json:"alias"`
+	Kind  string `json:"kind"`
+}
+
 func isServiceKey(rec *core.Record) bool {
 	return rec.GetString("kind") == "service"
 }
@@ -80,9 +88,20 @@ func onlyAI(recs []*core.Record) []*core.Record {
 	return out
 }
 
-func keyView(rec *core.Record, authorized bool) KeySafeView {
+func listView(rec *core.Record, authorized bool) any {
+	if !authorized {
+		kind := "ai"
+		if isServiceKey(rec) {
+			kind = "service"
+		}
+		return KeyPublicView{Id: rec.Id, Alias: rec.GetString("alias"), Kind: kind}
+	}
+	return keyView(rec)
+}
+
+func keyView(rec *core.Record) KeySafeView {
 	masked := "••••••••"
-	if authorized && rec.GetString("secret_key") != "" {
+	if rec.GetString("secret_key") != "" {
 		// segredo que não decifra fica só com a máscara; quem usa o segredo responde 500
 		if plain, err := decryptSecretAtRest(rec.GetString("secret_key")); err == nil {
 			masked = maskSecret(plain)
@@ -1013,9 +1032,9 @@ func registrarRotasDeChaves(r *router.Router[*core.RequestEvent], app core.App, 
 		})
 
 		authorized := tokenValid(evt.Request, cliToken)
-		result := make([]KeySafeView, 0, len(records))
+		result := make([]any, 0, len(records))
 		for _, rec := range records {
-			result = append(result, keyView(rec, authorized))
+			result = append(result, listView(rec, authorized))
 		}
 
 		return evt.JSON(http.StatusOK, result)
@@ -1077,7 +1096,7 @@ func registrarRotasDeChaves(r *router.Router[*core.RequestEvent], app core.App, 
 			return evt.InternalServerError("Erro ao salvar chave no cofre", err)
 		}
 
-		return evt.JSON(http.StatusOK, keyView(record, true))
+		return evt.JSON(http.StatusOK, keyView(record))
 	})
 
 	// Ativar uma chave específica como padrão (só IA)

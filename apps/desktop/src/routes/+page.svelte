@@ -164,22 +164,9 @@
     }, 3200);
   }
 
-  // Sincronizar status e chaves com o Gateway Go
+  // Sincronizar status e chaves com o Gateway Go. Só pelo Tauri: a listagem completa
+  // exige o token local, que a webview não lê (e o invoke auto-inicia o servidor Go).
   async function syncVault() {
-    try {
-      const res = await fetch(`${gatewayUrl}/api/keyhybrid/health`);
-      if (res.ok) {
-        gatewayOnline = true;
-        const kRes = await fetch(`${gatewayUrl}/api/keyhybrid/keys`);
-        if (kRes.ok) {
-          keys = await kRes.json();
-          return;
-        }
-      }
-    } catch {
-      // Fallback via Tauri invoke (que também auto-inicia o servidor Go se estiver fechado)
-    }
-
     try {
       await invoke("check_gateway_health", { gatewayUrl });
       gatewayOnline = true;

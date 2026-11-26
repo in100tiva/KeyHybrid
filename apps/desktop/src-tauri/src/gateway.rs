@@ -92,9 +92,12 @@ pub async fn list_vault_keys(gateway_url: String) -> Result<Vec<KeySafeView>, St
         .map_err(|e| e.to_string())?;
 
     let url = format!("{}/api/keyhybrid/keys", gateway_url.trim_end_matches('/'));
+    // Sem o token o gateway devolve só id, alias e kind.
+    let token = cli_token()?;
 
     let resp = client
         .get(&url)
+        .header("X-KeyHybrid-Token", token.as_str())
         .send()
         .await
         .map_err(|e| format!("Falha ao conectar ao Gateway: {e}"))?;
