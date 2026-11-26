@@ -22,6 +22,7 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o 
 
 ### Alterado
 
+- **PocketBase no novo endereço**: o módulo saiu do GitHub (repositório arquivado) para `ganigeorgiev.com/pocketbase/pocketbase`; o gateway sobe da v0.40.6 para a v0.42.3 (com `dbx` e `ozzo-validation` também nos caminhos novos) e passa a compilar com Go 1.27.4 (`toolchain` no `go.mod`). A v0.42 trouxe um middleware global que responde 401 a todo `Authorization` que não seja token do PocketBase: ele é desligado no gateway, porque o `/v1` e o `kh run` usam `Bearer kh-<alias>` e o token local, e um teste trava essa regra para as próximas atualizações do Dependabot.
 - **`workflow_dispatch` do `release.yml`**: disparos manuais passam a só ensaiar o build dos binários e instaladores (gerando os artifacts da execução), sem publicar uma release fora de tags `v*`; tags de pré-release publicam só o gateway.
 - **SvelteKit 3**: interface migrada de `@sveltejs/kit` 2.x para 3.4 e de `@sveltejs/adapter-static` 3.x para 4.x. A configuração deixou de ficar em `svelte.config.js` (arquivo removido) e passou para o plugin `sveltekit()` em `apps/desktop/vite.config.js`; o `tsconfig.json` agora estende o `$app/tsconfig` gerado pelo próprio kit.
 - `make check` e `make fmt` passam a cobrir o código Rust (`cargo fmt`), e o `docs/INSTALL.md` documenta o requisito de **Node.js 22.17+** e `pnpm` 10 no lugar de `npm`.

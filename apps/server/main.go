@@ -19,9 +19,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pocketbase/pocketbase"
-	"github.com/pocketbase/pocketbase/apis"
-	"github.com/pocketbase/pocketbase/core"
+	"ganigeorgiev.com/pocketbase/pocketbase"
+	"ganigeorgiev.com/pocketbase/pocketbase/apis"
+	"ganigeorgiev.com/pocketbase/pocketbase/core"
+	"ganigeorgiev.com/pocketbase/pocketbase/tools/router"
 )
 
 var (
@@ -436,6 +437,13 @@ func validarChave(req *KeyCreateRequest) (baseURL, authHeader, authPrefix string
 	return baseURL, authHeader, authPrefix, nil
 }
 
+// O gateway usa "Authorization: Bearer kh-<alias>" (e o token local), que não é token do
+// PocketBase. Desde a v0.42 um middleware global responde 401 a todo Authorization que não
+// carrega um registro de auth: sem isto, todo cliente do /v1 e do kh run seria recusado.
+func liberarAuthorizationProprio(r *router.Router[*core.RequestEvent]) {
+	r.Unbind(apis.DefaultRejectUnknownTokenMiddlewareId)
+}
+
 func main() {
 	// "run" é o kh run: não pode abrir pb_data ao lado do binário
 	if len(os.Args) > 1 && os.Args[1] == "run" {
@@ -472,6 +480,7 @@ func main() {
 			e.Server.IdleTimeout = 60 * time.Second
 		}
 		cliToken := loadOrCreateCLIToken()
+		liberarAuthorizationProprio(e.Router)
 
 		// Configurar CORS estrito do PocketBase (anti CSRF / Origin evil)
 		apis.DefaultCORSConfig.AllowOrigins = []string{
