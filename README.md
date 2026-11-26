@@ -67,7 +67,7 @@ flowchart LR
 
 - **Isolamento por alias (`kh-<alias>`)**: nenhuma ferramenta externa vê a chave real; o gateway descriptografa em RAM só no instante da chamada HTTPS.
 - **Criptografia em repouso**: AES-256-GCM no SQLite com chave mestra local. No Windows a chave mestra é selada por DPAPI; no Linux é um arquivo `0600` **sem selagem** (selagem pelo Secret Service planejada na [#40](https://github.com/in100tiva/KeyHybrid/issues/40)), então copiar `~/.keyhybrid` equivale a copiar as chaves: para backup use o `.khvault` e, no Linux, cifre o disco ou a home (LUKS). O hash Argon2id do PIN vai para o keyring do SO (Windows Credential Manager/Secret Service) e para um arquivo `0600`, com `Zeroize` em Rust.
-- **Fallback de guardrail**: se a OpenRouter recusar um modelo (`HTTP 404`), o gateway reroteia para `openrouter/auto` sem quebrar o agente.
+- **Sem troca silenciosa de modelo**: o modelo pedido vai ao provedor como veio; se ele recusar (`HTTP 404`, guardrail da OpenRouter), o erro volta ao cliente como veio. O `default_model` da chave só entra quando o pedido não traz modelo.
 
 ## Download
 
