@@ -159,7 +159,10 @@ func carregarChaveMestra(dataDir string) error {
 	}
 	_ = os.MkdirAll(dir, 0700)
 	_ = os.Chmod(dir, 0700)
-	k := loadOrCreateMasterKey(dir)
+	k, err := loadOrCreateMasterKey(dir)
+	if err != nil {
+		return err
+	}
 	chaveMestraMu.Lock()
 	chaveMestra = k
 	chaveMestraMu.Unlock()
@@ -187,8 +190,9 @@ func chaveMestraAtual() ([]byte, error) {
 
 // Só gera chave nova se o arquivo NÃO existe: trocar uma chave ilegível
 // deixaria todos os segredos já cifrados irrecuperáveis.
-// No Windows a chave é selada por DPAPI; no Linux fica em arquivo 0600 sem selagem (#40).
-func loadOrCreateMasterKey(pathOrDir string) []byte {
+// No Windows a chave é selada por DPAPI; no Linux fica no chaveiro do sistema
+// (Secret Service) e o arquivo guarda só um marcador (#40).
+func loadOrCreateMasterKey(pathOrDir string) ([]byte, error) {
 	dir := pathOrDir
 	if fi, err := os.Stat(pathOrDir); err == nil && !fi.IsDir() {
 		dir = filepath.Dir(pathOrDir)
@@ -199,57 +203,76 @@ func loadOrCreateMasterKey(pathOrDir string) []byte {
 	wrappedPath := filepath.Join(dir, ".master.key.wrapped")
 	legacyPath := filepath.Join(dir, ".master.key")
 
-	// 1. Tentar ler chave selada pelo SO
-	if wrappedData, err := os.ReadFile(wrappedPath); err == nil && len(wrappedData) > 0 {
-		unwrapped, uerr := osUnwrapKey(wrappedData)
-		if uerr == nil && len(unwrapped) == 32 {
-			_ = os.Remove(legacyPath)
-			return unwrapped
+	// 1. Chave selada pelo SO (no Linux, o marcador do chaveiro)
+	wrappedData, err := os.ReadFile(wrappedPath)
+	if err == nil {
+		defer clear(wrappedData)
+		if len(wrappedData) == 0 {
+			return nil, fmt.Errorf("arquivo da chave mestra vazio em %s; se ainda não existe cofre (data.db), apague esse arquivo e suba de novo; se existe, restaure o backup .khvault pelo app", wrappedPath)
 		}
-		log.Fatalf("[KeyHybrid] falha ao decifrar chave mestra selada pelo SO: %v", uerr)
-	}
-
-	// 2. Migração: se existir .master.key legada em claro, selar no SO e remover o arquivo em claro
-	if legacyData, err := os.ReadFile(legacyPath); err == nil {
-		if len(legacyData) != 32 {
-			log.Fatalf("[KeyHybrid] chave mestra legada com tamanho inválido (%d bytes)", len(legacyData))
+		k, err := abrirChaveSelada(dir, wrappedData)
+		if err != nil {
+			return nil, fmt.Errorf("falha ao abrir a chave mestra de %s: %w", wrappedPath, err)
 		}
-		wrapped, werr := osWrapKey(legacyData)
-		if werr != nil {
-			log.Fatalf("[KeyHybrid] falha ao selar chave mestra legada no SO: %v", werr)
-		}
-		if err := os.WriteFile(wrappedPath, wrapped, 0600); err != nil {
-			log.Fatalf("[KeyHybrid] falha ao salvar chave mestra selada: %v", err)
+		if len(k) != 32 {
+			clear(k)
+			return nil, fmt.Errorf("chave mestra de %s com tamanho inválido (%d bytes)", wrappedPath, len(k))
 		}
 		_ = os.Remove(legacyPath)
-		return legacyData
+		return k, nil
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("falha ao ler a chave mestra de %s: %w", wrappedPath, err)
 	}
 
-	// 3. Gerar nova chave e selar
+	// 2. Migração: se existir .master.key legada em claro, selar no SO e só então remover o arquivo em claro
+	legacyData, err := os.ReadFile(legacyPath)
+	if err == nil {
+		if len(legacyData) != 32 {
+			return nil, fmt.Errorf("chave mestra legada em %s com tamanho inválido (%d bytes)", legacyPath, len(legacyData))
+		}
+		wrapped, err := selarChave(dir, legacyData)
+		if err != nil {
+			return nil, fmt.Errorf("falha ao selar a chave mestra legada: %w", err)
+		}
+		if err := os.WriteFile(wrappedPath, wrapped, 0600); err != nil {
+			return nil, fmt.Errorf("falha ao salvar a chave mestra selada: %w", err)
+		}
+		_ = os.Remove(legacyPath)
+		return legacyData, nil
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("falha ao ler a chave mestra legada de %s: %w", legacyPath, err)
+	}
+
+	// 3. Chave nova. O arquivo é reservado ANTES de selar: duas instâncias ao mesmo tempo
+	// nunca deixam no chaveiro uma chave diferente da que ficou em uso.
 	newKey := make([]byte, 32)
 	if _, err := io.ReadFull(rand.Reader, newKey); err != nil {
-		log.Fatal("[KeyHybrid] falha ao gerar chave mestra: ", err)
-	}
-	wrapped, werr := osWrapKey(newKey)
-	if werr != nil {
-		log.Fatal("[KeyHybrid] falha ao selar chave mestra nova: ", werr)
+		return nil, fmt.Errorf("falha ao gerar chave mestra: %w", err)
 	}
 	f, err := os.OpenFile(wrappedPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if errors.Is(err, os.ErrExist) {
-		return loadOrCreateMasterKey(dir)
+	if errors.Is(err, fs.ErrExist) {
+		return nil, fmt.Errorf("a chave mestra em %s foi criada por outra instância ao mesmo tempo; suba de novo", wrappedPath)
 	}
 	if err != nil {
-		log.Fatal("[KeyHybrid] falha ao gravar chave mestra selada: ", err)
+		return nil, fmt.Errorf("falha ao gravar chave mestra selada: %w", err)
 	}
-	if _, err := f.Write(wrapped); err != nil {
-		f.Close()
-		os.Remove(wrappedPath)
-		log.Fatal("[KeyHybrid] falha ao gravar chave mestra selada: ", err)
+	wrapped, err := selarChave(dir, newKey)
+	if err == nil {
+		_, err = f.Write(wrapped)
 	}
-	if err := f.Close(); err != nil {
-		log.Fatal("[KeyHybrid] falha ao gravar chave mestra selada: ", err)
+	if err == nil {
+		err = f.Sync()
 	}
-	return newKey
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		_ = os.Remove(wrappedPath) // criado agora por esta instância, com O_EXCL
+		return nil, fmt.Errorf("falha ao gravar chave mestra nova em %s: %w", wrappedPath, err)
+	}
+	return newKey, nil
 }
 
 // O cofre mora em ~/.keyhybrid/pb_data, não ao lado do binário: cada launcher

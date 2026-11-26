@@ -152,11 +152,11 @@ func TestDataDirFicaNoHome(t *testing.T) {
 
 func TestMasterKeyNaoSobrescreve(t *testing.T) {
 	dir := t.TempDir()
-	k1 := loadOrCreateMasterKey(dir)
+	k1 := chaveOuFalha(t, dir)
 	if len(k1) != 32 {
 		t.Fatalf("chave nova com %d bytes", len(k1))
 	}
-	if k2 := loadOrCreateMasterKey(dir); !bytes.Equal(k1, k2) {
+	if k2 := chaveOuFalha(t, dir); !bytes.Equal(k1, k2) {
 		t.Fatal("segunda leitura gerou outra chave")
 	}
 	wp := filepath.Join(dir, ".master.key.wrapped")
@@ -169,7 +169,7 @@ func TestMasterKeyNaoSobrescreve(t *testing.T) {
 
 func TestKH05_MasterKeyNaoEmArquivo(t *testing.T) {
 	dir := t.TempDir()
-	k := loadOrCreateMasterKey(dir)
+	k := chaveOuFalha(t, dir)
 	if len(k) != 32 {
 		t.Fatalf("chave com %d bytes", len(k))
 	}
@@ -182,7 +182,7 @@ func TestKH05_MasterKeyNaoEmArquivo(t *testing.T) {
 		t.Fatal(".master.key.wrapped não foi criado!")
 	}
 	// Segunda leitura deve decifrar exatamente a mesma chave
-	k2 := loadOrCreateMasterKey(dir)
+	k2 := chaveOuFalha(t, dir)
 	if !bytes.Equal(k, k2) {
 		t.Fatal("segunda leitura da chave selada retornou bytes diferentes")
 	}
