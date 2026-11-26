@@ -1,9 +1,11 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { SERVICES, detectProvider } from "../lib/providers.ts";
   import { importRows, khRunCommand, planImport } from "../lib/envImport.ts";
   import type { ImportRow } from "../lib/envImport.ts";
+  import { canConfirmReplace, defaultBackupName, formatBackupDate, passphraseStrength, validatePassphrase } from "../lib/backup.ts";
+  import type { BackupPreview, BackupResult, BackupStatus, RestoreResult } from "../lib/backup.ts";
 
   interface KeySafeView {
     id: string;
@@ -78,6 +80,23 @@
   let activeBefore = "";
   let plan = $derived(planImport(envText, keys.map((k) => k.alias)));
   let selectedRows = $derived(plan.rows.filter((r) => !skipped.includes(r.names[0])));
+
+  // Backup do cofre (#26): senhas e o caminho ficam só nesta tela e são zerados ao concluir, cancelar ou falhar
+  let backupOpen = $state(false);
+  let backupStep = $state<"inicio" | "backup" | "restaurar-senha" | "restaurar-previa" | "restaurar-resultado">("inicio");
+  let backupPass = $state("");
+  let backupPassConfirm = $state("");
+  let backupStatus = $state<BackupStatus | null>(null);
+  let backupError = $state("");
+  let backupDone = $state("");
+  let backupBusy = $state(false);
+  let backupProgress = $state("");
+  let backupTitle = $state<HTMLElement | null>(null);
+  let restorePath = $state("");
+  let restorePreview = $state<BackupPreview | null>(null);
+  let restoreMode = $state<"merge" | "replace">("merge");
+  let restoreConfirm = $state("");
+  let restoreResult = $state<RestoreResult | null>(null);
 
 
   function envVarFor(provider: string, alias: string): string {
@@ -274,6 +293,155 @@
     imported = [];
     leftOut = [];
     importError = "";
+  }
+
+  // Foco vai para o título ou para o resultado de cada etapa (leitor de tela anuncia a troca)
+  function focusTitle(node: HTMLElement) {
+    node.focus();
+  }
+
+  function clearBackupSecrets() {
+    backupPass = "";
+    backupPassConfirm = "";
+    restoreConfirm = "";
+  }
+
+  async function loadBackupStatus() {
+    try {
+      backupStatus = await invoke<BackupStatus>("backup_status");
+    } catch (err) {
+      backupError = String(err);
+    }
+  }
+
+  function openBackup() {
+    backupOpen = true;
+    backupStep = "inicio";
+    backupError = "";
+    backupDone = "";
+    void loadBackupStatus();
+  }
+
+  // Volta para o início e zera o que foi digitado nesta etapa
+  function voltarBackup() {
+    clearBackupSecrets();
+    backupError = "";
+    restorePath = "";
+    restorePreview = null;
+    restoreMode = "merge";
+    backupStep = "inicio";
+    // O botão clicado sai do DOM: o foco volta ao título em vez de cair no body
+    void tick().then(() => backupTitle?.focus());
+  }
+
+  function closeBackup() {
+    voltarBackup();
+    backupOpen = false;
+    backupDone = "";
+    restoreResult = null;
+  }
+
+  function onBackupKey(e: KeyboardEvent) {
+    // Durante a operação, Esc não troca a tela por baixo do resultado
+    if (!backupOpen || e.key !== "Escape" || backupBusy) return;
+    if (backupStep === "inicio") closeBackup();
+    else voltarBackup();
+  }
+
+  async function fazerBackup() {
+    if (backupBusy) return;
+    const erro = validatePassphrase(backupPass, backupPassConfirm);
+    if (erro) {
+      backupError = erro;
+      return;
+    }
+    backupBusy = true;
+    backupError = "";
+    try {
+      const destino = await invoke<string | null>("choose_backup_destination", {
+        suggestedName: defaultBackupName(new Date()),
+      });
+      if (!destino) return; // diálogo cancelado: a senha é zerada no finally
+      backupProgress = "Gerando o backup…";
+      const res = await invoke<BackupResult>("backup_vault", { path: destino, passphrase: backupPass });
+      backupDone = `Backup salvo em ${res.path} com ${res.items} chaves.`;
+      backupStep = "inicio";
+      await loadBackupStatus();
+    } catch (err) {
+      backupError = String(err);
+    } finally {
+      clearBackupSecrets();
+      backupBusy = false;
+      backupProgress = "";
+    }
+  }
+
+  async function escolherBackup() {
+    if (backupBusy) return;
+    backupBusy = true;
+    backupError = "";
+    try {
+      const caminho = await invoke<string | null>("choose_backup_file");
+      if (!caminho) return;
+      restorePath = caminho;
+      backupStep = "restaurar-senha";
+    } catch (err) {
+      backupError = String(err);
+    } finally {
+      backupBusy = false;
+    }
+  }
+
+  // Só lê o cabeçalho e o conteúdo para a prévia; nada é gravado nesta etapa
+  async function lerBackup() {
+    if (backupBusy) return;
+    if (!backupPass) {
+      backupError = "Digite a senha do backup.";
+      return;
+    }
+    backupBusy = true;
+    backupError = "";
+    backupProgress = "Lendo o backup…";
+    try {
+      restorePreview = await invoke<BackupPreview>("inspect_backup", { path: restorePath, passphrase: backupPass });
+      backupStep = "restaurar-previa";
+    } catch (err) {
+      backupError = String(err);
+      backupPass = "";
+    } finally {
+      backupBusy = false;
+      backupProgress = "";
+    }
+  }
+
+  async function restaurar() {
+    if (backupBusy || !restorePreview) return;
+    if (restoreMode === "replace" && !canConfirmReplace(restoreConfirm)) {
+      backupError = "Para substituir tudo, digite SUBSTITUIR.";
+      return;
+    }
+    backupBusy = true;
+    backupError = "";
+    backupProgress = restoreMode === "replace" ? "Guardando uma cópia do cofre atual e restaurando…" : "Restaurando…";
+    try {
+      restoreResult = await invoke<RestoreResult>("restore_vault", {
+        path: restorePath,
+        passphrase: backupPass,
+        mode: restoreMode,
+        confirmation: restoreMode === "replace" ? restoreConfirm.trim() : null,
+      });
+      backupStep = "restaurar-resultado";
+      await syncVault();
+    } catch (err) {
+      // Falhou: volta à senha, porque a senha já foi zerada
+      backupError = String(err);
+      restorePreview = null;
+      backupStep = "restaurar-senha";
+    } finally {
+      clearBackupSecrets();
+      backupBusy = false;
+      backupProgress = "";
+    }
   }
 
   // Texto arrastado cai no campo como sempre; arquivo é lido aqui
@@ -571,7 +739,7 @@
   });
 </script>
 
-<svelte:window onpointerdown={onWindowPointerDown} ondragover={blockFileDrop} ondrop={blockFileDrop} />
+<svelte:window onpointerdown={onWindowPointerDown} onkeydown={onBackupKey} ondragover={blockFileDrop} ondrop={blockFileDrop} />
 
 <!-- FILTRO SVG DE DISTORÇÃO LÍQUIDA ESTILO MACOS GENIE -->
 <svg class="genie-svg-defs" width="0" height="0" aria-hidden="true">
@@ -806,6 +974,125 @@
         </button>
         <div class="import-actions">
           <button class="db-copy-action" onclick={closeImport}>Concluir</button>
+        </div>
+      {/if}
+    </section>
+
+  {:else if backupOpen}
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- BACKUP E RESTAURAÇÃO DO COFRE (#26): senhas só na memória, zeradas ao sair -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <section class="import-stage backup-stage">
+      <h2 class="import-title" tabindex="-1" use:focusTitle bind:this={backupTitle}>Backup e restauração</h2>
+      <p class="import-note">
+        O backup é um arquivo único e cifrado. Guarde onde quiser: pendrive, HD externo ou o seu Drive. O KeyHybrid não envia nada pela internet e não fica sabendo onde o arquivo foi parar.
+      </p>
+
+      {#if backupError}
+        <p class="lock-error" role="alert">{backupError}</p>
+        {#if hasPinConfigured && backupError.startsWith("Cofre bloqueado")}
+          <!-- O PIN vale 15 min; depois dele a etapa volta sozinha (backupOpen segue true) -->
+          <div class="import-actions">
+            <button class="db-back-btn" onclick={() => { backupError = ""; openPinLockOrSetup(); }}>Desbloquear</button>
+          </div>
+        {/if}
+      {/if}
+      <!-- Sempre no DOM: leitor de tela só anuncia mudança em região viva que já existia -->
+      <p class="import-note backup-progress" role="status">{backupProgress}</p>
+
+      {#if backupStep === "inicio"}
+        {#if backupDone}
+          <p class="import-ok" role="status" tabindex="-1" use:focusTitle>{backupDone}</p>
+        {/if}
+        <p class="import-note">
+          {#if backupStatus?.last_backup}
+            Último backup: {formatBackupDate(backupStatus.last_backup.at)}, com {backupStatus.last_backup.items} chaves, em {backupStatus.last_backup.path}.
+          {:else}
+            Nenhum backup feito ainda.
+          {/if}
+          {#if backupStatus?.last_restore}
+            Última restauração: {formatBackupDate(backupStatus.last_restore.at)}, {backupStatus.last_restore.items} chaves ({backupStatus.last_restore.mode === "replace" ? "Substituir" : "Mesclar"}), de {backupStatus.last_restore.path}.
+          {/if}
+        </p>
+        <div class="import-actions">
+          <button class="db-copy-action" disabled={backupBusy} onclick={() => { backupDone = ""; backupError = ""; backupStep = "backup"; }}>Fazer backup</button>
+          <button class="db-copy-action" disabled={backupBusy} onclick={escolherBackup}>Restaurar backup</button>
+          <button class="db-copy-action" onclick={closeBackup}>Fechar</button>
+        </div>
+
+      {:else if backupStep === "backup"}
+        <label class="backup-label" for="backup-senha">Senha do backup (pelo menos 12 caracteres)</label>
+        <input id="backup-senha" class="backup-input" type="password" autocomplete="new-password" bind:value={backupPass} use:focusTitle />
+        <label class="backup-label" for="backup-senha-2">Digite a senha de novo</label>
+        <input id="backup-senha-2" class="backup-input" type="password" autocomplete="new-password" bind:value={backupPassConfirm} />
+        <p class="backup-strength" aria-live="polite">Força: {passphraseStrength(backupPass).label}</p>
+        <p class="import-note">Sem esta senha não há como recuperar o backup. Ela é diferente do PIN.</p>
+        <div class="import-actions">
+          <button class="db-copy-action" disabled={backupBusy} onclick={voltarBackup}>Voltar</button>
+          <button class="db-copy-action" disabled={backupBusy} onclick={fazerBackup}>Escolher onde salvar</button>
+        </div>
+
+      {:else if backupStep === "restaurar-senha"}
+        <p class="import-note">Arquivo escolhido: {restorePath}</p>
+        <label class="backup-label" for="restore-senha">Senha do backup</label>
+        <input id="restore-senha" class="backup-input" type="password" autocomplete="current-password" bind:value={backupPass} use:focusTitle />
+        <div class="import-actions">
+          <button class="db-copy-action" disabled={backupBusy} onclick={voltarBackup}>Voltar</button>
+          <button class="db-copy-action" disabled={backupBusy} onclick={lerBackup}>Ler backup</button>
+        </div>
+
+      {:else if backupStep === "restaurar-previa" && restorePreview}
+        <p class="import-note" tabindex="-1" use:focusTitle>
+          Backup de {formatBackupDate(restorePreview.created_at)}, versão {restorePreview.app_version}: {restorePreview.total} chaves ({restorePreview.ai_keys} de IA, {restorePreview.service_keys} de serviço).
+        </p>
+        <p class="import-note">Provedores: {restorePreview.providers.join(", ") || "nenhum"}.</p>
+        <p class="import-note">Apelidos: {restorePreview.aliases.join(", ") || "nenhum"}.</p>
+        {#if restorePreview.conflicts.length}
+          <p class="import-note">Já existem neste cofre: {restorePreview.conflicts.join(", ")}.</p>
+        {/if}
+
+        <fieldset class="backup-modes">
+          <legend>Como restaurar</legend>
+          <label class="backup-radio">
+            <input type="radio" name="restore-mode" value="merge" bind:group={restoreMode} />
+            Mesclar (padrão): acrescenta as chaves do backup ao cofre atual
+          </label>
+          <label class="backup-radio">
+            <input type="radio" name="restore-mode" value="replace" bind:group={restoreMode} />
+            Substituir tudo: o cofre atual é trocado pelo conteúdo do backup
+          </label>
+        </fieldset>
+
+        {#if restoreMode === "replace"}
+          <p class="import-note">Antes de substituir, o KeyHybrid guarda uma cópia do cofre atual na pasta backups/ do KeyHybrid, cifrada com a mesma senha deste backup.</p>
+          <label class="backup-label" for="restore-confirm">Para confirmar, digite SUBSTITUIR</label>
+          <input id="restore-confirm" class="backup-input" type="text" autocomplete="off" spellcheck="false" bind:value={restoreConfirm} />
+        {/if}
+
+        <div class="import-actions">
+          <button class="db-copy-action" disabled={backupBusy} onclick={voltarBackup}>Voltar</button>
+          <button
+            class="db-copy-action"
+            disabled={backupBusy || !backupPass || (restoreMode === "replace" && !canConfirmReplace(restoreConfirm))}
+            onclick={restaurar}
+          >Restaurar</button>
+        </div>
+
+      {:else if backupStep === "restaurar-resultado" && restoreResult}
+        <p class="import-ok" role="status" tabindex="-1" use:focusTitle>
+          Restauração concluída: {restoreResult.added.length} chaves adicionadas, {restoreResult.total_after} no cofre agora.
+        </p>
+        {#if restoreResult.mode === "replace"}
+          <p class="import-note">Chaves anteriores removidas: {restoreResult.removed}.</p>
+        {/if}
+        {#if restoreResult.conflicts.length}
+          <p class="import-note">Apelidos que já existiam: {restoreResult.conflicts.join(", ")}.</p>
+        {/if}
+        {#if restoreResult.safety_backup}
+          <p class="import-note">Cópia de segurança do cofre anterior: {restoreResult.safety_backup}</p>
+        {/if}
+        <div class="import-actions">
+          <button class="db-copy-action" onclick={closeBackup}>Concluir</button>
         </div>
       {/if}
     </section>
@@ -1142,6 +1429,10 @@
           <span class="tool-sep">|</span>
           <button class="tool-item" onclick={() => (importOpen = true)}>
             <span>⤓</span> Importar .env
+          </button>
+          <span class="tool-sep">|</span>
+          <button class="tool-item" onclick={openBackup}>
+            <span>◫</span> Backup
           </button>
           <span class="tool-sep">|</span>
           <button class="tool-item" onclick={syncVault}>
@@ -2798,4 +3089,58 @@
     font-weight: 500;
   }
 
+  /* Backup do cofre (#26): texto em #a1a1aa para contraste AA, foco visível em tudo */
+  .backup-stage .import-note {
+    color: #a1a1aa;
+  }
+  .backup-label {
+    display: block;
+    margin-top: 12px;
+    color: #d4d4d8;
+    font-size: 13px;
+  }
+  .backup-input {
+    width: 100%;
+    box-sizing: border-box;
+    margin-top: 6px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid #3f3f46;
+    background: #18181b;
+    color: #fafafa;
+    font: inherit;
+  }
+  .backup-progress:empty {
+    margin: 0;
+  }
+  .backup-strength {
+    margin: 8px 0 0;
+    color: #d4d4d8;
+    font-size: 13px;
+  }
+  .backup-modes {
+    margin: 14px 0 0;
+    padding: 0;
+    border: 0;
+    color: #d4d4d8;
+  }
+  .backup-modes legend {
+    margin-bottom: 6px;
+    font-size: 13px;
+  }
+  .backup-radio {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    margin-bottom: 6px;
+    font-size: 13px;
+  }
+  .backup-stage button:focus-visible,
+  .backup-stage input:focus-visible {
+    outline: 2px solid #a3e635;
+    outline-offset: 2px;
+  }
+  .backup-stage [tabindex="-1"]:focus {
+    outline: none;
+  }
 </style>

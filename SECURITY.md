@@ -83,6 +83,45 @@ Para conferir a integridade do download:
 sha256sum -c SHA256SUMS.txt
 ```
 
+## Modelo de ameaça do backup do cofre
+
+O backup (`.khvault`, [#26](https://github.com/in100tiva/KeyHybrid/issues/26)) existe para levar o cofre para outra máquina sem copiar pastas internas. Formato e fluxo em [docs/USAGE.md](docs/USAGE.md#backup-e-restauração-do-cofre).
+
+**Contra o que protege**
+
+- **Arquivo roubado ou perdido** (pendrive, Drive, HD externo): sem a senha, o único caminho é força bruta offline contra o Argon2id (`m=64 MiB`, `t=3`, `p=4`, versão `0x13`), com senha de no mínimo 12 caracteres.
+- **Arquivo adulterado ou truncado**: AES-256-GCM com os 38 bytes do cabeçalho (magic, versão, flags, salt, nonce) autenticados como AAD. Salt, nonce ou corpo alterados falham com a mesma mensagem genérica de senha errada; magic, versão ou flags inválidos são recusados como arquivo corrompido. Nos dois casos, antes de qualquer escrita no cofre.
+- **Reuso de nonce**: salt e nonce novos, aleatórios, em cada arquivo, inclusive no backup de segurança feito antes de um *Substituir tudo*.
+- **Restauração parcial**: todas as chaves são validadas pelas regras do cadastro antes da primeira escrita e a gravação roda numa única transação do banco; o *Substituir tudo* grava antes um backup de segurança e, se ele falhar, não apaga nada.
+
+**Contra o que não protege**
+
+- **Malware rodando com o seu usuário.** Ele já lê o `pb_data` e a chave mestra (selada pelo SO para esse mesmo usuário) e pode rodar `keyhybrid-server vault-dump` como o app faz. O backup não piora nem melhora isso.
+- **Senha fraca.** Só o mínimo de 12 caracteres é obrigatório; o medidor de força é indicativo. Uma senha previsível cai na força bruta offline.
+- **Senha perdida.** Não há recuperação, cópia da senha nem porta dos fundos.
+- **Backup antigo.** Um arquivo continua válido para sempre com a senha dele. Se ele vazar junto com a senha, gire as chaves no provedor; apagar a chave do cofre não invalida o backup.
+
+**Sem rede e sem rota HTTP**
+
+- O backup não abre conexão: o app cifra e decifra o arquivo em Rust e conversa com o `keyhybrid-server` do mesmo usuário só por pipe (`vault-dump` / `vault-apply`).
+- O gateway não tem rota de backup, export ou import. O teste `TestVaultSemRotaHTTP` (`apps/server/vault_cli_test.go`) varre os registros de rota do servidor e falha se algum caminho contiver `backup`, `export`, `import`, `dump`, `restore` ou `vault-apply`. O `TestVaultSemRede` falha se o dump ou a aplicação usarem o `http.DefaultTransport`.
+
+**Onde o texto em claro existe**
+
+- Só em memória: no processo do app, no `keyhybrid-server` e no pipe entre os dois, que são processos do mesmo usuário. Nenhum arquivo temporário em claro é gravado. O `.khvault`, o backup de segurança e o `backup-status.json` (data, caminho e contagem, sem segredos) são os únicos arquivos escritos; a pasta `~/.keyhybrid/backups` nasce com `0700` no Linux/macOS.
+- **Rust:** senha, chave derivada, texto decifrado, envelope serializado e a saída/entrada do pipe ficam em `Zeroizing` e são zerados ao sair de escopo. O documento do cofre já lido (`PlainVault`) zera todas as suas strings no `Drop`, e o JSON é lido e escrito em buffers com capacidade fixa de 16 MiB, para não deixar cópias de realocação para trás. É uma tentativa de higiene de memória: o alocador e o parser ainda podem ter cópias curtas fora desse controle.
+- **Go:** os buffers de entrada, saída e de cada segredo decifrado são zerados com `wipeBytes`, mas o segredo também vira `string` no documento JSON, e `string` em Go é imutável: essa cópia só some quando o coletor de lixo libera a memória. O processo é curto (termina logo depois do dump ou da aplicação).
+- **Interface:** a senha digitada vive no estado da tela até concluir, cancelar ou falhar, e então é apagada; strings de JavaScript também não são zeráveis.
+
+**Diálogos e superfície do webview**
+
+- Os diálogos de salvar e abrir arquivo são abertos pelo Rust (`tauri-plugin-dialog`). O `capabilities/default.json` não concede nenhuma permissão `dialog:` ao webview; ele só recebe o caminho escolhido.
+- Todos os comandos de backup conferem a origem local da janela e, com PIN configurado, exigem o cofre desbloqueado.
+
+**O comando `vault-dump` existe**
+
+- `keyhybrid-server vault-dump` despeja o cofre em claro no stdout e recusa apenas o stdout de terminal, para não pintar segredo na tela por engano. Qualquer processo do seu usuário pode rodá-lo com o stdout num pipe ou num arquivo. Isso não dá poder novo: o mesmo processo já poderia ler o `pb_data` e a chave mestra. Não redirecione o dump para arquivo fora do app.
+
 ## Nosso compromisso
 
 | Etapa | Prazo alvo |

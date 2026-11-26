@@ -184,7 +184,11 @@ func loadOrCreateMasterKey(pathOrDir string) []byte {
 // O cofre mora em ~/.keyhybrid/pb_data, não ao lado do binário: cada launcher
 // (app, run_linux.sh, systemd) subia uma cópia diferente e abria um cofre vazio.
 // --dir continua valendo por cima.
-func dataDir() string {
+func dataDir() string { return dataDirCriando(true) }
+
+// criar=false só resolve o caminho: quem só lê o cofre não pode criar um vazio
+// (numa instalação antiga, a pasta nova vazia passaria a esconder o cofre de verdade)
+func dataDirCriando(criar bool) string {
 	home := homeDir()
 	dir := filepath.Join(home, ".keyhybrid", "pb_data")
 	if _, err := os.Stat(dir); err == nil {
@@ -198,7 +202,9 @@ func dataDir() string {
 			return legado
 		}
 	}
-	_ = os.MkdirAll(dir, 0700)
+	if criar {
+		_ = os.MkdirAll(dir, 0700)
+	}
 	return dir
 }
 
@@ -294,24 +300,8 @@ func resolveProviderURL(provider string, customURL string) string {
 	}
 }
 
-func main() {
-	// "run" é o kh run: não pode abrir pb_data ao lado do binário
-	if len(os.Args) > 1 && os.Args[1] == "run" {
-		os.Exit(runCmd(os.Args[2:]))
-	}
-
-	if len(os.Args) == 2 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
-		log.Printf("keyhybrid-server %s", version)
-		return
-	}
-
-	log.Printf("[KeyHybrid] keyhybrid-server %s", version)
-
-	getOrCreateMasterKey() // chave ilegível para o boot, não uma requisição no meio
-
-	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: dataDir()})
-
-	// 1. Inicializar coleção "vault_keys" no SQLite
+// Coleção "vault_keys" no bootstrap; o CLI de cofre (vault_cli.go) usa o mesmo hook
+func vincularBootstrapVaultKeys(app core.App) {
 	app.OnBootstrap().BindFunc(func(e *core.BootstrapEvent) error {
 		if err := e.Next(); err != nil {
 			return err
@@ -394,6 +384,85 @@ func main() {
 
 		return nil
 	})
+}
+
+// validarChave normaliza e valida o cadastro; o POST e o vault-apply aplicam a mesma regra
+func validarChave(req *KeyCreateRequest) (baseURL, authHeader, authPrefix string, err error) {
+	req.Alias = strings.TrimSpace(req.Alias)
+	req.SecretKey = strings.TrimSpace(req.SecretKey)
+	req.Provider = strings.TrimSpace(strings.ToLower(req.Provider))
+	req.Kind = strings.TrimSpace(strings.ToLower(req.Kind))
+	if req.Kind == "" {
+		req.Kind = "ai"
+	}
+	if req.Kind != "ai" && req.Kind != "service" {
+		return "", "", "", errors.New("Tipo de chave inválido: use ai ou service")
+	}
+	if req.Alias == "" || req.SecretKey == "" {
+		return "", "", "", errors.New("O nome (alias) e a chave secreta são obrigatórios")
+	}
+	if req.Provider == "" {
+		req.Provider = "openrouter"
+		if req.Kind == "service" {
+			req.Provider = "outro"
+		}
+	}
+	if req.Kind == "ai" && (req.DefaultModel == "" || req.DefaultModel == "google/gemini-2.0-flash-001") {
+		req.DefaultModel = "openrouter/auto"
+	}
+	if req.Kind == "service" {
+		req.DefaultModel = "" // modelo só existe para IA
+	}
+
+	baseURL = req.BaseURL
+	if req.Kind == "service" {
+		// só pontos ("." ou "..") viraria segmento de caminho na URL do proxy
+		if !aliasRe.MatchString(req.Alias) || strings.Trim(req.Alias, ".") == "" {
+			return "", "", "", errors.New("Alias inválido: use letras, números, ponto, traço ou sublinhado (até 64)")
+		}
+		base, errURL := validateServiceBaseURL(req.BaseURL)
+		if errURL != nil {
+			return "", "", "", errURL
+		}
+		baseURL = base
+		authHeader = strings.TrimSpace(req.AuthHeader)
+		authPrefix = req.AuthPrefix
+		if authHeader == "" {
+			authHeader, authPrefix = "Authorization", "Bearer "
+		} else if !isAllowedAuthHeader(authHeader) {
+			return "", "", "", errors.New("Cabeçalho de autenticação proibido ou inválido")
+		}
+	}
+	return baseURL, authHeader, authPrefix, nil
+}
+
+func main() {
+	// "run" é o kh run: não pode abrir pb_data ao lado do binário
+	if len(os.Args) > 1 && os.Args[1] == "run" {
+		os.Exit(runCmd(os.Args[2:]))
+	}
+
+	// vault-dump e vault-apply: backup portátil do cofre pela CLI, sem rota HTTP
+	if len(os.Args) > 1 && os.Args[1] == "vault-dump" {
+		os.Exit(vaultDumpCmd(os.Args[2:]))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "vault-apply" {
+		os.Exit(vaultApplyCmd(os.Args[2:]))
+	}
+
+	if len(os.Args) == 2 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
+		log.Printf("keyhybrid-server %s", version)
+		return
+	}
+
+	log.Printf("[KeyHybrid] keyhybrid-server %s", version)
+
+	getOrCreateMasterKey() // chave ilegível para o boot, não uma requisição no meio
+
+	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: dataDir()})
+
+	// 1. Inicializar coleção "vault_keys" no SQLite
+	vincularBootstrapVaultKeys(app)
 
 	// 2. Rotas do Gateway e Gerenciamento Seguro de Chaves
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
@@ -518,49 +587,9 @@ func main() {
 				return evt.BadRequestError("Dados inválidos", err)
 			}
 
-			req.Alias = strings.TrimSpace(req.Alias)
-			req.SecretKey = strings.TrimSpace(req.SecretKey)
-			req.Provider = strings.TrimSpace(strings.ToLower(req.Provider))
-			req.Kind = strings.TrimSpace(strings.ToLower(req.Kind))
-			if req.Kind == "" {
-				req.Kind = "ai"
-			}
-			if req.Kind != "ai" && req.Kind != "service" {
-				return evt.BadRequestError("Tipo de chave inválido: use ai ou service", nil)
-			}
-
-			if req.Alias == "" || req.SecretKey == "" {
-				return evt.BadRequestError("O nome (alias) e a chave secreta são obrigatórios", nil)
-			}
-			if req.Provider == "" {
-				req.Provider = "openrouter"
-				if req.Kind == "service" {
-					req.Provider = "outro"
-				}
-			}
-			if req.Kind == "ai" && (req.DefaultModel == "" || req.DefaultModel == "google/gemini-2.0-flash-001") {
-				req.DefaultModel = "openrouter/auto"
-			}
-
-			baseURL := req.BaseURL
-			authHeader, authPrefix := "", ""
-			if req.Kind == "service" {
-				// só pontos ("." ou "..") viraria segmento de caminho na URL do proxy
-				if !aliasRe.MatchString(req.Alias) || strings.Trim(req.Alias, ".") == "" {
-					return evt.BadRequestError("Alias inválido: use letras, números, ponto, traço ou sublinhado (até 64)", nil)
-				}
-				base, err := validateServiceBaseURL(req.BaseURL)
-				if err != nil {
-					return evt.BadRequestError(err.Error(), nil)
-				}
-				baseURL = base
-				authHeader = strings.TrimSpace(req.AuthHeader)
-				authPrefix = req.AuthPrefix
-				if authHeader == "" {
-					authHeader, authPrefix = "Authorization", "Bearer "
-				} else if !isAllowedAuthHeader(authHeader) {
-					return evt.BadRequestError("Cabeçalho de autenticação proibido ou inválido", nil)
-				}
+			baseURL, authHeader, authPrefix, err := validarChave(&req)
+			if err != nil {
+				return evt.BadRequestError(err.Error(), nil)
 			}
 
 			collection, err := app.FindCollectionByNameOrId("vault_keys")
@@ -595,9 +624,6 @@ func main() {
 			record.Set("base_url", baseURL)
 			record.Set("auth_header", authHeader)
 			record.Set("auth_prefix", authPrefix)
-			if req.Kind == "service" {
-				req.DefaultModel = "" // modelo só existe para IA
-			}
 			record.Set("default_model", req.DefaultModel)
 			record.Set("active", req.Kind == "ai") // "ativo" é só de IA
 
