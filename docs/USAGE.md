@@ -11,6 +11,15 @@ Depois de salvar uma chave (ex.: `openrouter`) na interface, o KeyHybrid gera o 
 
 Funciona em qualquer SDK compatível com a API da OpenAI — basta trocar a base URL e a chave.
 
+### Autenticação do `/v1/*`
+
+Vale para todas as rotas `/v1` (chat, `/v1/models`, áudio e vídeo):
+
+- **`Authorization: Bearer kh-<alias>`** de uma chave de IA cadastrada passa sem o token local (compatibilidade com clientes OpenAI). `kh-default` usa a chave ativa.
+- **`kh-<alias>` que não existe** responde `404` com a lista dos aliases de IA cadastrados: `{"error": "alias <x> não cadastrado no KeyHybrid", "aliases": [...]}`. Nunca cai na chave ativa.
+- **Qualquer outro caso** (outro Bearer, sem `Authorization`, só `X-Provider`) exige o token local em `X-KeyHybrid-Token` (ou como Bearer); sem ele, `401`. Com o token, vale a chave ativa ou o `X-Provider`.
+- O campo `"alias"` no JSON do chat também precisa existir, senão `404` com a mesma lista.
+
 ## Chat / Completions
 
 O endpoint `/v1/chat/completions` suporta **múltiplos provedores** nativamente (`anthropic`, `gemini`, `groq`, `openai`, `openrouter`).
@@ -21,7 +30,7 @@ Você pode selecionar o provedor de três formas, com a seguinte precedência:
 1. **Pelo header `X-Provider`:** ex.: `-H "X-Provider: anthropic"`
 2. **Pelo prefixo no model ID:** ex.: `"model": "anthropic/claude-3-5-sonnet"`, `"model": "groq/llama-3.3-70b-versatile"`, `"model": "gemini/gemini-2.0-flash"`
 3. **Pelo token virtual de alias:** ex.: `Authorization: Bearer kh-anthropic`
-4. **Fallback padrão (default):** Se nenhum prefixo ou header for informado, o gateway envia para o provedor ativo (`active: true`) no cofre (ex.: OpenRouter), mantendo 100% de retrocompatibilidade.
+4. **Fallback padrão (default):** Sem prefixo, header nem alias (ou com `kh-default`), o gateway envia para o provedor ativo (`active: true`) no cofre (ex.: OpenRouter). Alias explícito que não existe dá `404`, nunca o provedor ativo.
 
 ### 2. Conversando com a Anthropic pelo SDK oficial da OpenAI
 

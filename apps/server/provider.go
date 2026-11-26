@@ -96,7 +96,7 @@ func parseModelPrefix(model string) (string, string) {
 // Resolução de provedor com precedência:
 // 1. Header X-Provider (se fornecido)
 // 2. Prefixo no model id (ex: anthropic/claude-3-5-sonnet)
-// 3. requestedAlias (kh-<alias> ou alias no payload)
+// 3. requestedAlias (kh-<alias> ou alias no payload); alias inexistente devolve nil, sem fallback
 // 4. Provedor ativo (active=true)
 // 5. Primeiro provedor de IA cadastrado
 func resolveAIProvider(
@@ -142,9 +142,11 @@ func resolveAIProvider(
 				return r, cleanModel, p
 			}
 		}
+		// Alias explícito que não existe nunca cai na chave ativa
+		return nil, cleanModel, ""
 	}
 
-	// 3. Fallback: chave ativa
+	// 3. Fallback: chave ativa (só sem alias explícito)
 	for _, r := range records {
 		if r.GetBool("active") {
 			p := normalizeProvider(r.GetString("provider"))

@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"ganigeorgiev.com/pocketbase/pocketbase/core"
 )
 
 var (
@@ -134,6 +136,45 @@ func tokenValid(r *http.Request, token string) bool {
 		}
 	}
 	return false
+}
+
+// Autoriza uma chamada /v1/*. Devolve o alias pedido ("" = chave ativa) ou status+corpo do erro.
+// "Bearer kh-<alias>" de alias de IA existente (ou kh-default) dispensa o token local, por
+// compatibilidade com clientes OpenAI; kh-<alias> inexistente dá 404 com a lista; qualquer
+// outro caso (outro Bearer, sem Authorization, só X-Provider) exige o token local.
+func v1Auth(r *http.Request, token string, aiRecs []*core.Record) (alias string, status int, body map[string]any) {
+	auth := strings.TrimSpace(r.Header.Get("Authorization"))
+	if strings.HasPrefix(strings.ToLower(auth), "bearer ") {
+		bearer := strings.ToLower(strings.TrimSpace(auth[7:]))
+		if a, ok := strings.CutPrefix(bearer, "kh-"); ok {
+			return v1Alias(a, aiRecs)
+		}
+	}
+	if !tokenValid(r, token) {
+		return "", http.StatusUnauthorized, map[string]any{
+			"message": "Informe Authorization: Bearer kh-<alias> de uma chave cadastrada ou o X-KeyHybrid-Token",
+		}
+	}
+	return "", 0, nil
+}
+
+// Confere um alias explícito: "default" é a chave ativa; alias de IA inexistente dá 404 com a lista.
+func v1Alias(a string, aiRecs []*core.Record) (string, int, map[string]any) {
+	a = strings.ToLower(strings.TrimSpace(a))
+	if a == "default" {
+		return "", 0, nil
+	}
+	aliases := []string{}
+	for _, rec := range aiRecs {
+		if strings.EqualFold(rec.GetString("alias"), a) {
+			return a, 0, nil
+		}
+		aliases = append(aliases, rec.GetString("alias"))
+	}
+	return "", http.StatusNotFound, map[string]any{
+		"error":   "alias " + a + " não cadastrado no KeyHybrid",
+		"aliases": aliases,
+	}
 }
 
 // Base de chave de serviço: só https, sem usuário, query nem fragmento; barra final removida
