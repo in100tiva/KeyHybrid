@@ -74,7 +74,7 @@ jobs:
           cache-dependency-path: apps/desktop/pnpm-lock.yaml
 
       - name: Instalar dependências
-        run: pnpm install --frozen-lockfile --config.dangerouslyAllowAllBuilds=true
+        run: pnpm install --frozen-lockfile
 
       - name: svelte-check
         run: pnpm run check

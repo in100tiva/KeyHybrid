@@ -53,15 +53,12 @@ systemctl --user restart keyhybrid.service # reinstalação: pega o binário nov
 # 4. Desktop App (Svelte 5 + Tauri v2) em release
 echo "[4/5] Compilando o Desktop App (apps/desktop)..."
 cd "$ROOT_DIR/apps/desktop"
-if command -v bun >/dev/null 2>&1; then
-  bun install && bun run tauri build --no-bundle
-elif command -v pnpm >/dev/null 2>&1; then
-  pnpm install --frozen-lockfile --config.dangerouslyAllowAllBuilds=true
-  pnpm run tauri build --no-bundle
-else
-  echo "ERRO: instale o pnpm 10 (veja docs/INSTALL.md) ou o bun e rode de novo." >&2
+if ! command -v pnpm >/dev/null 2>&1; then
+  echo "ERRO: instale o pnpm 10 (veja docs/INSTALL.md) e rode de novo." >&2
   exit 1
 fi
+pnpm install --frozen-lockfile
+pnpm run tauri build --no-bundle
 
 # 5. Atalho no menu de aplicativos
 echo "[5/5] Criando atalho no menu..."
