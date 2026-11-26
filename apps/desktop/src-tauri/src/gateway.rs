@@ -26,6 +26,11 @@ pub struct KeySafeView {
     pub kind: Option<String>,
     #[serde(default)]
     pub base_url: Option<String>,
+    // Último uso/status do alias (#55): o gateway só devolve com o token local
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_status: Option<u16>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

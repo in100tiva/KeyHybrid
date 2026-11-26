@@ -7,6 +7,7 @@
   import { backupReminder, canConfirmReplace, defaultBackupName, formatBackupDate, passphraseStrength, validatePassphrase } from "../lib/backup.ts";
   import type { BackupPreview, BackupResult, BackupStatus, RestoreResult } from "../lib/backup.ts";
   import { textoSelagem } from "../lib/selagem.ts";
+  import { usageLabel, usageRefused } from "../lib/usage.ts";
 
   const selagem = textoSelagem(navigator.userAgent);
 
@@ -21,6 +22,8 @@
     updated: string;
     kind?: string | null;
     base_url?: string | null;
+    last_used_at?: string | null;
+    last_status?: number | null;
   }
 
   const gatewayUrl = "http://127.0.0.1:8090";
@@ -1222,6 +1225,9 @@
                   </div>
 
                   <div class="key-row-right">
+                    {#if usageRefused(k)}
+                      <span class="usage-refused" title="o provedor recusou a chave">HTTP {k.last_status}</span>
+                    {/if}
                     {#if k.kind === "service"}
                       <span class="linked-tag">serviço · {k.provider}</span>
                     {:else if k.active}
@@ -1274,6 +1280,11 @@
             <span class="meta-text">
               {selectedKey ? `${selectedKey.masked_key}` : selagem.cofre}
             </span>
+            {#if selectedKey && usageLabel(selectedKey)}
+              <span class="meta-text {usageRefused(selectedKey) ? 'usage-refused' : ''}">
+                {usageLabel(selectedKey)}{usageRefused(selectedKey) ? " · o provedor recusou a chave" : ""}
+              </span>
+            {/if}
           </div>
         </div>
 
@@ -2391,6 +2402,11 @@
   .meta-text {
     font-family: "SF Mono", Consolas, monospace;
     font-size: 10.5px;
+  }
+
+  .usage-refused {
+    font-size: 10px;
+    color: #f87171;
   }
 
   /* COLUNA DIREITA: AÇÕES DE ACESSO RÁPIDO */

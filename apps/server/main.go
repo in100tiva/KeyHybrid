@@ -60,6 +60,9 @@ type KeySafeView struct {
 	Kind         string `json:"kind"`
 	BaseURL      string `json:"base_url"`
 	AuthHeader   string `json:"auth_header"`
+	// Só com o token local e depois do primeiro uso desde que o gateway subiu (#55)
+	LastUsedAt string `json:"last_used_at,omitempty"`
+	LastStatus int    `json:"last_status,omitempty"`
 }
 
 // O que a listagem mostra sem token: provider, base_url e auth_header dariam
@@ -115,6 +118,9 @@ func keyView(rec *core.Record) KeySafeView {
 		Active:     rec.GetBool("active"),
 		Kind:       "ai",
 		AuthHeader: rec.GetString("auth_header"),
+	}
+	if u, ok := lastUsage(v.Alias); ok {
+		v.LastUsedAt, v.LastStatus = u.at.Format(time.RFC3339), u.status
 	}
 	if isServiceKey(rec) {
 		v.Kind = "service"
@@ -762,6 +768,7 @@ func main() {
 				return err
 			}
 			status := forwardToService(evt.Response, evt.Request, target, authName, authPrefix+secret)
+			recordUsage(rec.GetString("alias"), status)
 			log.Printf("[KeyHybrid] proxy %s %s /%s -> %d\n", alias, evt.Request.Method, rest, status)
 			return nil
 		})
@@ -1161,7 +1168,19 @@ func registrarRotasDeChaves(r *router.Router[*core.RequestEvent], app core.App, 
 
 // Handler universal compatível com OpenAI / OpenRouter (/v1/chat/completions e /api/ai/proxy/chat)
 func proxyChat(app core.App, cliToken string) func(*core.RequestEvent) error {
-	return func(evt *core.RequestEvent) error {
+	return func(evt *core.RequestEvent) (retErr error) {
+		// Uma linha de log por requisição e último uso/status do alias (#55).
+		// usedAlias só vem da chave encontrada: o Bearer do cliente pode ser um segredo colado por engano.
+		start := time.Now()
+		var usedAlias, requestedModel, returnedModel string
+		status := 0
+		defer func() {
+			if status == 0 {
+				status = errStatus(retErr)
+			}
+			finishV1(usedAlias, requestedModel, returnedModel, status, start)
+		}()
+
 		evt.Request.Body = http.MaxBytesReader(evt.Response, evt.Request.Body, 4<<20)
 		bodyBytes, err := io.ReadAll(evt.Request.Body)
 		if err != nil {
@@ -1184,11 +1203,13 @@ func proxyChat(app core.App, cliToken string) func(*core.RequestEvent) error {
 		// Alias pelo Authorization: Bearer kh-<alias> ou pelo campo "alias" do JSON
 		requestedAlias, st, errBody := v1Auth(evt.Request, cliToken, allRecords)
 		if st != 0 {
+			status = st
 			return evt.JSON(st, errBody)
 		}
 		if a, ok := payload["alias"].(string); ok && a != "" {
 			requestedAlias, st, errBody = v1Alias(strings.TrimPrefix(strings.ToLower(strings.TrimSpace(a)), "kh-"), allRecords)
 			if st != 0 {
+				status = st
 				return evt.JSON(st, errBody)
 			}
 			delete(payload, "alias")
@@ -1202,7 +1223,7 @@ func proxyChat(app core.App, cliToken string) func(*core.RequestEvent) error {
 		}
 
 		// Obter o modelo solicitado
-		requestedModel, _ := payload["model"].(string)
+		requestedModel, _ = payload["model"].(string)
 
 		matchedRecord, cleanModel, provider := resolveAIProvider(
 			requestedAlias,
@@ -1214,6 +1235,8 @@ func proxyChat(app core.App, cliToken string) func(*core.RequestEvent) error {
 		if matchedRecord == nil {
 			return evt.NotFoundError("Chave ou provedor não encontrado no cofre", nil)
 		}
+
+		usedAlias = matchedRecord.GetString("alias")
 
 		secretKey, err := segredoDoRegistro(evt, matchedRecord)
 		if err != nil {
@@ -1280,6 +1303,7 @@ func proxyChat(app core.App, cliToken string) func(*core.RequestEvent) error {
 			defer upstreamResp.Body.Close()
 
 			if upstreamResp.StatusCode != http.StatusOK {
+				status = upstreamResp.StatusCode
 				for k, v := range upstreamResp.Header {
 					evt.Response.Header()[k] = v
 				}
@@ -1289,6 +1313,7 @@ func proxyChat(app core.App, cliToken string) func(*core.RequestEvent) error {
 			}
 
 			if isStream {
+				status = http.StatusOK
 				return pipeAnthropicStreamToOpenAI(evt.Request.Context(), evt.Response, upstreamResp.Body, requestedModel)
 			}
 
@@ -1301,6 +1326,7 @@ func proxyChat(app core.App, cliToken string) func(*core.RequestEvent) error {
 				return evt.InternalServerError("Falha ao decodificar resposta da Anthropic", err)
 			}
 			openaiResp := translateAnthropicToOpenAI(&antResp, requestedModel)
+			status, returnedModel = http.StatusOK, antResp.Model
 			return evt.JSON(http.StatusOK, openaiResp)
 		}
 
@@ -1347,6 +1373,7 @@ func proxyChat(app core.App, cliToken string) func(*core.RequestEvent) error {
 			evt.Response.Header()[k] = v
 		}
 		evt.Response.WriteHeader(upstreamResp.StatusCode)
+		status = upstreamResp.StatusCode
 
 		if isStream {
 			flusher, isFlusher := evt.Response.(http.Flusher)
@@ -1368,7 +1395,12 @@ func proxyChat(app core.App, cliToken string) func(*core.RequestEvent) error {
 			return nil
 		}
 
-		_, err = io.Copy(evt.Response, upstreamResp.Body)
+		// Sem streaming o corpo é lido inteiro para extrair só o campo "model" do log
+		respBody, err := io.ReadAll(upstreamResp.Body)
+		returnedModel = modelFromBody(respBody)
+		if _, wErr := evt.Response.Write(respBody); err == nil {
+			err = wErr
+		}
 		return err
 	}
 }
