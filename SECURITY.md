@@ -91,7 +91,7 @@ O backup (`.khvault`, [#26](https://github.com/in100tiva/KeyHybrid/issues/26)) e
 
 **Contra o que protege**
 
-- **Arquivo roubado ou perdido** (pendrive, Drive, HD externo): sem a senha, o único caminho é força bruta offline contra o Argon2id (`m=64 MiB`, `t=3`, `p=4`, versão `0x13`), com senha de no mínimo 12 caracteres.
+- **Arquivo roubado ou perdido** (pendrive, Drive, HD externo): sem a senha, o único caminho é força bruta offline contra o Argon2id (`m=64 MiB`, `t=3`, `p=4`, versão `0x13`), com senha de no mínimo 12 caracteres, pelo menos 6 deles diferentes e, abaixo de 16 caracteres, com 3 tipos entre minúsculas, maiúsculas, números e símbolos (ou espaço).
 - **Arquivo adulterado ou truncado**: AES-256-GCM com os 38 bytes do cabeçalho (magic, versão, flags, salt, nonce) autenticados como AAD. Salt, nonce ou corpo alterados falham com a mesma mensagem genérica de senha errada; magic, versão ou flags inválidos são recusados como arquivo corrompido. Nos dois casos, antes de qualquer escrita no cofre.
 - **Reuso de nonce**: salt e nonce novos, aleatórios, em cada arquivo, inclusive no backup de segurança feito antes de um *Substituir tudo*.
 - **Restauração parcial**: todas as chaves são validadas pelas regras do cadastro antes da primeira escrita e a gravação roda numa única transação do banco; o *Substituir tudo* grava antes um backup de segurança e, se ele falhar, não apaga nada.
@@ -99,7 +99,7 @@ O backup (`.khvault`, [#26](https://github.com/in100tiva/KeyHybrid/issues/26)) e
 **Contra o que não protege**
 
 - **Malware rodando com o seu usuário.** Ele já lê o `pb_data` e a chave mestra (no Windows, selada por DPAPI para esse mesmo usuário; no Linux, um arquivo `0600` sem selagem) e pode rodar `keyhybrid-server vault-dump` como o app faz. O backup não piora nem melhora isso.
-- **Senha fraca.** Só o mínimo de 12 caracteres é obrigatório; o medidor de força é indicativo. Uma senha previsível cai na força bruta offline.
+- **Senha previsível.** O app recusa as fracas óbvias (`aaaaaaaaaaaa`, `senha123senha`), mas não reconhece palavra de dicionário nem dado pessoal; o medidor de força é indicativo. Uma senha previsível que passa nas regras ainda cai na força bruta offline. A regra vale só para criar backup: restaurar aceita a senha que o arquivo tiver, para que backups antigos continuem abrindo.
 - **Senha perdida.** Não há recuperação, cópia da senha nem porta dos fundos.
 - **Backup antigo.** Um arquivo continua válido para sempre com a senha dele. Se ele vazar junto com a senha, gire as chaves no provedor; apagar a chave do cofre não invalida o backup.
 
@@ -119,6 +119,13 @@ O backup (`.khvault`, [#26](https://github.com/in100tiva/KeyHybrid/issues/26)) e
 
 - Os diálogos de salvar e abrir arquivo são abertos pelo Rust (`tauri-plugin-dialog`). O `capabilities/default.json` não concede nenhuma permissão `dialog:` ao webview; ele só recebe o caminho escolhido.
 - Todos os comandos de backup conferem a origem local da janela e, com PIN configurado, exigem o cofre desbloqueado.
+
+**O que o PIN protege e o que não protege**
+
+- O PIN de 6 dígitos só tranca a **interface do app**: com o cofre bloqueado, a tela e os comandos do app (inclusive backup e restauração) pedem o PIN.
+- O **servidor não conhece o PIN**. O gateway em `127.0.0.1:8090`, o `kh run` e o `keyhybrid-server vault-dump` funcionam com o app bloqueado; o PIN não cifra o cofre nem a chave mestra.
+- O hash do PIN (Argon2id com salt) fica no chaveiro do sistema e em `~/.keyhybrid/.pin.vault`, arquivos do seu usuário. Com só 1 milhão de combinações, quem lê esse arquivo testa todas offline.
+- Quem tem acesso ao seu usuário do sistema passa pelo PIN: ele protege contra alguém olhando a tela destravada, não contra malware nem contra quem tem sua sessão.
 
 **O comando `vault-dump` existe**
 

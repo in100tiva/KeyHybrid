@@ -44,9 +44,24 @@ test("a força conta caracteres Unicode, não bytes", () => {
 test("recusa senha curta e senhas que não batem", () => {
   assert.equal(validatePassphrase("curta", "curta"), "A senha do backup precisa de pelo menos 12 caracteres.");
   assert.equal(validatePassphrase("ç".repeat(11), "ç".repeat(11)), "A senha do backup precisa de pelo menos 12 caracteres.");
-  assert.equal(validatePassphrase("abcdefghijkl", "abcdefghijkx"), "As duas senhas não são iguais.");
-  assert.equal(validatePassphrase("abcdefghijkl", "abcdefghijkl"), null);
-  assert.equal(validatePassphrase("🔐".repeat(12), "🔐".repeat(12)), null);
+  assert.equal(validatePassphrase("Abcdefghijk1", "Abcdefghijkx"), "As duas senhas não são iguais.");
+  assert.equal(validatePassphrase("Abcdefghijk1", "Abcdefghijk1"), null);
+  assert.equal(validatePassphrase("🔐🔑🔒🔓💾📦🔐🔑🔒🔓💾📦🔐🔑🔒🔓", "🔐🔑🔒🔓💾📦🔐🔑🔒🔓💾📦🔐🔑🔒🔓"), null);
+});
+
+test("recusa senha fraca com as mesmas regras do backup.rs", () => {
+  const repetitiva = "A senha do backup precisa de pelo menos 6 caracteres diferentes.";
+  const poucosTipos =
+    "Com menos de 16 caracteres, a senha do backup precisa misturar 3 tipos: minúsculas, maiúsculas, números e símbolos (ou espaço).";
+  const v = (p: string) => validatePassphrase(p, p);
+  assert.equal(v("aaaaaaaaaaaa"), repetitiva);
+  assert.equal(v("🔐".repeat(12)), repetitiva);
+  assert.equal(v("abcabcabcabcabcabcab"), repetitiva);
+  assert.equal(v("senha123senha"), poucosTipos);
+  assert.equal(v("abcdefghijkl"), poucosTipos);
+  assert.equal(v("Cavalo-Bateria-Grampo"), null);
+  assert.equal(v("cavalo bateria grampo correto"), null);
+  assert.equal(v("Senha123senha"), null);
 });
 
 test("SUBSTITUIR só vale com a palavra exata (espaços das pontas não contam)", () => {
@@ -103,7 +118,7 @@ test("as funções puras não usam armazenamento, console nem rede", async () =>
   try {
     defaultBackupName(new Date(2026, 10, 26));
     passphraseStrength("Abcdefghijklmnop1");
-    validatePassphrase("abcdefghijkl", "abcdefghijkl");
+    validatePassphrase("Abcdefghijk1", "Abcdefghijk1");
     canConfirmReplace("SUBSTITUIR");
     formatBackupDate("2026-11-26T15:00:00Z");
     backupReminder("2026-11-26T15:00:00Z", new Date());

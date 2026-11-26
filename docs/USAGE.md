@@ -184,7 +184,11 @@ Se o cofre tem PIN, ele precisa estar desbloqueado; senão aparece *"Cofre bloqu
 ### Senha do backup
 
 - Pelo menos **12 caracteres** (contados como caracteres, não bytes: `á` conta 1). Abaixo disso, o app recusa.
+- Pelo menos **6 caracteres diferentes** (`aaaaaaaaaaaa` é recusada).
+- Com **12 a 15 caracteres**, misture pelo menos **3 tipos**: minúsculas, maiúsculas, números e símbolos (espaço conta como símbolo). `senha123senha` é recusada; `Cavalo-Bateria-Grampo` ou uma frase longa só com minúsculas passam.
+- Essas regras valem só para **fazer** backup. Restaurar aceita a senha que o arquivo tiver, então backups antigos continuam abrindo.
 - É **outra senha**, separada do PIN de 6 dígitos do cofre. O PIN não abre o backup.
+- O PIN só tranca a interface do app: o servidor não o conhece, e o gateway e o `kh run` seguem funcionando com o app bloqueado. Quem tem acesso ao seu usuário do sistema passa por ele. Detalhes em [SECURITY.md](../SECURITY.md#modelo-de-ameaça-do-backup-do-cofre).
 - **Não existe recuperação.** Perdeu a senha, perdeu o backup. O KeyHybrid não guarda cópia dela nem tem como quebrar o arquivo.
 - As senhas ficam só na memória da tela e são apagadas ao concluir, cancelar, voltar ou falhar.
 
@@ -274,6 +278,8 @@ As mensagens vão para o stderr e nunca contêm segredo; o app mostra a última 
 | Mensagem | O que significa |
 | --- | --- |
 | A senha do backup precisa de pelo menos 12 caracteres. | Senha curta ao fazer backup. |
+| A senha do backup precisa de pelo menos 6 caracteres diferentes. | Senha repetitiva ao fazer backup (ex.: `aaaaaaaaaaaa`). |
+| Com menos de 16 caracteres, a senha do backup precisa misturar 3 tipos: minúsculas, maiúsculas, números e símbolos (ou espaço). | Senha de 12 a 15 caracteres com só 1 ou 2 tipos ao fazer backup. |
 | As duas senhas não são iguais. | A confirmação não bate com a senha. |
 | Senha incorreta ou arquivo alterado. | A senha está errada, ou o arquivo foi modificado ou truncado depois do cabeçalho. O app não distingue os dois casos de propósito. |
 | Arquivo corrompido ou não é um backup do KeyHybrid. | Magic, versão `0`, flags ou JSON interno inválidos, ou arquivo menor que o mínimo. |

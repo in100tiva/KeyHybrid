@@ -1035,7 +1035,7 @@
         </div>
 
       {:else if backupStep === "backup"}
-        <label class="backup-label" for="backup-senha">Senha do backup (pelo menos 12 caracteres)</label>
+        <label class="backup-label" for="backup-senha">Senha do backup (pelo menos 12 caracteres; com menos de 16, misture 3 tipos)</label>
         <input id="backup-senha" class="backup-input" type="password" autocomplete="new-password" bind:value={backupPass} use:focusTitle />
         <label class="backup-label" for="backup-senha-2">Digite a senha de novo</label>
         <input id="backup-senha-2" class="backup-input" type="password" autocomplete="new-password" bind:value={backupPassConfirm} />
