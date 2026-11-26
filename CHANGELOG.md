@@ -32,6 +32,7 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o 
 
 ### Corrigido
 
+- **Token local trocado por uma segunda instância do gateway** ([#37](https://github.com/in100tiva/KeyHybrid/issues/37)): o gateway agora abre a porta 8090 antes de rotacionar o `~/.keyhybrid/.cli.token`. Uma instância que encontra a porta ocupada sai com erro claro e não invalida o token de quem está atendendo, que antes deixava o `kh run` e o `/proxy` com "token recusado". No Linux, com o `keyhybrid.service` habilitado, o app e o `run_linux.sh` passam a pedir `systemctl --user start` em vez de subir um servidor próprio, que segurava a porta com o binário antigo durante atualizações. A ordem segura de atualização está em `docs/USAGE.md`.
 - **Lints do Rust**: os avisos que o `cargo clippy -D warnings` acusava em `vault.rs`, `lib.rs` e `gateway.rs` foram resolvidos (`if` aninhados colapsados com *let chains* do Rust 2024 e uso de `is_multiple_of`); o comando `save_vault_key` mantém a assinatura plana exigida pelo `invoke` do Tauri.
 
 ### Segurança

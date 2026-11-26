@@ -40,9 +40,40 @@ pub(crate) fn find_server_bin() -> Option<PathBuf> {
     server_bin::first_existing(&candidates)
 }
 
+/// Pasta das unidades do systemd do usuário: $XDG_CONFIG_HOME/systemd/user ou ~/.config/systemd/user
+#[cfg(target_os = "linux")]
+fn systemd_user_dir() -> PathBuf {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+        .unwrap_or_default()
+        .join("systemd")
+        .join("user")
+}
+
+/// `systemctl --user enable keyhybrid.service` cria este link em default.target.wants
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn servico_systemd_habilitado(systemd_user_dir: &std::path::Path) -> bool {
+    systemd_user_dir
+        .join("default.target.wants")
+        .join("keyhybrid.service")
+        .exists()
+}
+
 pub fn ensure_gateway_running() {
     let addr = "127.0.0.1:8090".parse().unwrap();
     if TcpStream::connect_timeout(&addr, Duration::from_millis(250)).is_ok() {
+        return;
+    }
+
+    // Gateway gerenciado pelo systemd (install_linux.sh): pede ao serviço em vez de subir um
+    // processo próprio, que segurava a porta com o binário antigo durante atualizações (#37)
+    #[cfg(target_os = "linux")]
+    if servico_systemd_habilitado(&systemd_user_dir()) {
+        let _ = Command::new("systemctl")
+            .args(["--user", "start", "keyhybrid.service"])
+            .status();
         return;
     }
 
@@ -122,4 +153,24 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("Erro ao executar aplicação KeyHybrid Tauri");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::servico_systemd_habilitado;
+    use std::fs;
+
+    #[test]
+    fn detecta_servico_systemd_habilitado() {
+        let mut r = [0u8; 8];
+        getrandom::fill(&mut r).unwrap();
+        let dir = std::env::temp_dir().join(format!("kh-systemd-{:x}", u64::from_le_bytes(r)));
+        assert!(!servico_systemd_habilitado(&dir));
+        let wants = dir.join("default.target.wants");
+        fs::create_dir_all(&wants).unwrap();
+        assert!(!servico_systemd_habilitado(&dir)); // só a pasta, sem o serviço
+        fs::write(wants.join("keyhybrid.service"), "").unwrap();
+        assert!(servico_systemd_habilitado(&dir));
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

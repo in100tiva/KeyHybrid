@@ -18,6 +18,7 @@ __pycache__/
 *~
 apps/server/keyhybrid-server
 apps/server/keyhybrid-server.exe
+apps/server/server
 target/
 **/target/
 node_modules/

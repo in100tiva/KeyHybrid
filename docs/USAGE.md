@@ -278,6 +278,19 @@ As mensagens vão para o stderr e nunca contêm segredo; o app mostra a última 
 | Não foi possível salvar o backup / a cópia de segurança: … | Falha de disco ou permissão no destino. |
 | Histórico de backup ilegível (backup-status.json). | O arquivo de status foi editado à mão ou corrompeu; apague-o para recomeçar o histórico. |
 
+## Atualizar o KeyHybrid no Linux
+
+O `install_linux.sh` deixa o gateway como serviço do usuário (`keyhybrid.service`). Com o serviço habilitado, o app e o `run_linux.sh` pedem ao systemd para subir o gateway, em vez de rodar um `keyhybrid-server` próprio. Para trocar o binário sem perder o token local nem o cofre:
+
+1. Faça um backup em **Backup → Fazer backup** (veja a seção acima).
+2. Feche o app do KeyHybrid.
+3. `systemctl --user stop keyhybrid.service`
+4. Troque o binário: rode `./install_linux.sh` de novo, ou copie o `keyhybrid-server` novo para `~/.keyhybrid/bin/`.
+5. `systemctl --user start keyhybrid.service` e confira com `systemctl --user status keyhybrid.service`.
+6. Abra o app. A lista de chaves deve ser a mesma de antes.
+
+O token local (`~/.keyhybrid/.cli.token`) é trocado a cada início do gateway, mas só depois que ele conseguiu a porta 8090. Uma segunda instância que encontra a porta ocupada sai com `porta 127.0.0.1:8090 ocupada (outro KeyHybrid já está rodando?); token local mantido` e não mexe no token de quem está atendendo.
+
 ## Limitações conhecidas
 
 - Um processo malicioso rodando com o seu usuário ainda pode ler a chave.

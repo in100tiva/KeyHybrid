@@ -11,7 +11,12 @@ fi
 
 if ! nc -z 127.0.0.1 8090 >/dev/null 2>&1; then
   echo "[KeyHybrid] Iniciando Gateway Seguro em http://127.0.0.1:8090 ..."
-  (cd "$ROOT_DIR/apps/server" && nohup ./keyhybrid-server serve --http=127.0.0.1:8090 >/tmp/keyhybrid-server.log 2>&1 &)
+  if systemctl --user is-enabled --quiet keyhybrid.service 2>/dev/null; then
+    # Instalado pelo install_linux.sh: o serviço cuida do gateway (#37)
+    systemctl --user start keyhybrid.service
+  else
+    (cd "$ROOT_DIR/apps/server" && nohup ./keyhybrid-server serve --http=127.0.0.1:8090 >/tmp/keyhybrid-server.log 2>&1 &)
+  fi
   sleep 1
 fi
 
