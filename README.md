@@ -37,12 +37,12 @@ flowchart LR
 
     subgraph SecurityLayer["Camada de Segurança Nativa"]
         PIN["PIN de 6 dígitos"]
-        OSVault["Windows DPAPI / Linux Secret Service\n+ ZeroizeOnDrop"]
+        OSVault["PIN: Windows DPAPI / Linux Secret Service\n+ ZeroizeOnDrop"]
     end
 
     subgraph Gateway["KeyHybrid Local Gateway (Go :8090)"]
         Proxy["Reverse Proxy Multimodal\n/v1/chat, /v1/audio, /v1/videos"]
-        AES["AES-256-GCM\n(~/.keyhybrid/.master.key)"]
+        AES["AES-256-GCM\n(~/.keyhybrid/.master.key.wrapped:\nDPAPI no Windows, 0600 sem selagem no Linux)"]
         DB[("SQLite local\nsecret_key = enc:v1:...")]
     end
 
@@ -66,7 +66,7 @@ flowchart LR
 ## Pilares de segurança
 
 - **Isolamento por alias (`kh-<alias>`)**: nenhuma ferramenta externa vê a chave real; o gateway descriptografa em RAM só no instante da chamada HTTPS.
-- **Criptografia dupla em repouso**: AES-256-GCM no SQLite com chave mestra local (`0600`) + DPAPI/Secret Service para credenciais e PIN, com `Zeroize` em Rust.
+- **Criptografia em repouso**: AES-256-GCM no SQLite com chave mestra local. No Windows a chave mestra é selada por DPAPI; no Linux é um arquivo `0600` **sem selagem** (selagem pelo Secret Service planejada na [#40](https://github.com/in100tiva/KeyHybrid/issues/40)), então copiar `~/.keyhybrid` equivale a copiar as chaves: para backup use o `.khvault` e, no Linux, cifre o disco ou a home (LUKS). O hash Argon2id do PIN vai para o keyring do SO (Windows Credential Manager/Secret Service) e para um arquivo `0600`, com `Zeroize` em Rust.
 - **Fallback de guardrail**: se a OpenRouter recusar um modelo (`HTTP 404`), o gateway reroteia para `openrouter/auto` sem quebrar o agente.
 
 ## Download

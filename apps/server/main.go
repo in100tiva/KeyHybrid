@@ -120,7 +120,7 @@ func getOrCreateMasterKey() []byte {
 
 // Só gera chave nova se o arquivo NÃO existe: trocar uma chave ilegível
 // deixaria todos os segredos já cifrados irrecuperáveis.
-// A chave é selada pelo mecanismo do SO (DPAPI no Windows).
+// No Windows a chave é selada por DPAPI; no Linux fica em arquivo 0600 sem selagem (#40).
 func loadOrCreateMasterKey(pathOrDir string) []byte {
 	dir := pathOrDir
 	if fi, err := os.Stat(pathOrDir); err == nil && !fi.IsDir() {

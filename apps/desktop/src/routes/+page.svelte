@@ -6,6 +6,9 @@
   import type { ImportRow } from "../lib/envImport.ts";
   import { canConfirmReplace, defaultBackupName, formatBackupDate, passphraseStrength, validatePassphrase } from "../lib/backup.ts";
   import type { BackupPreview, BackupResult, BackupStatus, RestoreResult } from "../lib/backup.ts";
+  import { textoSelagem } from "../lib/selagem.ts";
+
+  const selagem = textoSelagem(navigator.userAgent);
 
   interface KeySafeView {
     id: string;
@@ -183,7 +186,7 @@
     }
   }
 
-  // Salvar nova chave no Windows DPAPI + Gateway Go
+  // Salvar nova chave no Gateway Go
   async function handleSaveKey() {
     if (isSaving) return;
 
@@ -232,7 +235,7 @@
 
     isSaving = true;
     try {
-      // Salva pelo Rust (DPAPI + Gateway com token local); erro cai no catch abaixo
+      // Salva pelo Rust (Gateway com token local); erro cai no catch abaixo
       await invoke("save_vault_key", {
         gatewayUrl,
         alias,
@@ -608,7 +611,7 @@
     return `curl ${getProxyUrl(k)} -H "X-KeyHybrid-Token: $(cat ~/.keyhybrid/.cli.token)"`;
   }
 
-  // Lógica Real do PIN de 6 dígitos (Windows DPAPI)
+  // Lógica Real do PIN de 6 dígitos (keyring do SO + arquivo 0600)
   async function checkPinStatus() {
     try {
       hasPinConfigured = await invoke("has_vault_pin");
@@ -666,7 +669,7 @@
             hasPinConfigured = true;
             isSettingPin = false;
             isLocked = false;
-            showNotice("PIN de 6 dígitos salvo no Windows DPAPI.");
+            showNotice(selagem.pinSalvo);
           } catch (err: any) {
             pinError = String(err);
             resetPinBoxes();
@@ -827,7 +830,7 @@
       </h2>
       <p class="lock-subtitle">
         {isSettingPin
-          ? "Defina um código de 6 dígitos para proteger suas chaves no DPAPI"
+          ? selagem.definirPin
           : "Digite o código de verificação para desbloquear o KeyHybrid"}
       </p>
 
@@ -857,7 +860,7 @@
         </p>
       {:else}
         <p class="lock-helper">
-          Cofre protegido via Windows DPAPI
+          {selagem.rodape}
         </p>
       {/if}
     </section>
@@ -1109,7 +1112,7 @@
           <div class="db-top-meta">
             <span><small>PROVIDER</small> {selectedKey.provider.toUpperCase()}</span>
             <span><small>KEY</small> {selectedKey.masked_key}</span>
-            <span><small>PWR</small> DPAPI</span>
+            <span><small>PWR</small> {selagem.selo}</span>
           </div>
 
           <div class="db-center-block">
@@ -1238,7 +1241,7 @@
           <div class="col-footer-meta">
             <span class="meta-square"></span>
             <span class="meta-text">
-              {selectedKey ? `${selectedKey.masked_key}` : "Cofre Windows DPAPI"}
+              {selectedKey ? `${selectedKey.masked_key}` : selagem.cofre}
             </span>
           </div>
         </div>
