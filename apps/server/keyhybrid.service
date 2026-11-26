@@ -7,6 +7,14 @@ Restart=on-failure
 RestartSec=2
 # sem core dump: o core levaria as chaves da memória e do ambiente
 LimitCORE=0
+# Endurecimento que vale em unidade de usuário (sem namespace, sem privilégio)
+NoNewPrivileges=yes
+UMask=0077
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+MemoryDenyWriteExecute=yes
 
 [Install]
 WantedBy=default.target
