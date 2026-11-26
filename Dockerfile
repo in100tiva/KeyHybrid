@@ -13,7 +13,7 @@ COPY apps/server/ ./
 
 ARG VERSION=dev
 ENV CGO_ENABLED=0
-RUN go build -trimpath -buildvcs=false \
+RUN go build -tags no_ui -trimpath -buildvcs=false \
       -ldflags "-s -w -X main.version=${VERSION}" \
       -o /out/keyhybrid-server .
 

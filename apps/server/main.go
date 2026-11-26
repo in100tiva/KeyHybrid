@@ -24,6 +24,7 @@ import (
 	"ganigeorgiev.com/pocketbase/pocketbase"
 	"ganigeorgiev.com/pocketbase/pocketbase/apis"
 	"ganigeorgiev.com/pocketbase/pocketbase/core"
+	"ganigeorgiev.com/pocketbase/pocketbase/tools/hook"
 	"ganigeorgiev.com/pocketbase/pocketbase/tools/router"
 )
 
@@ -460,6 +461,22 @@ func reservarPortaEToken(e *core.ServeEvent) (string, error) {
 	return loadOrCreateCLIToken(), nil
 }
 
+// As APIs nativas do PocketBase (/api/collections, /api/superusers, /api/files...) e o
+// painel /_/ não têm uso no gateway: tudo fora de rotaPermitida responde 404 antes de
+// qualquer middleware do PocketBase (auth, logger, CORS).
+func bloquearRotasNativas(r *router.Router[*core.RequestEvent]) {
+	r.Bind(&hook.Handler[*core.RequestEvent]{
+		Id:       "keyhybridBloquearRotasNativas",
+		Priority: apis.DefaultWWWRedirectMiddlewarePriority - 1,
+		Func: func(e *core.RequestEvent) error {
+			if !rotaPermitida(e.Request.URL.Path) {
+				return e.NotFoundError("Rota não encontrada", nil)
+			}
+			return e.Next()
+		},
+	})
+}
+
 func main() {
 	desligarCoreDump() // antes de tudo: vale para o servidor e para os filhos do kh run
 
@@ -502,6 +519,7 @@ func main() {
 			return err
 		}
 		liberarAuthorizationProprio(e.Router)
+		bloquearRotasNativas(e.Router)
 
 		// Configurar CORS estrito do PocketBase (anti CSRF / Origin evil)
 		apis.DefaultCORSConfig.AllowOrigins = []string{

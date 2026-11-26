@@ -31,7 +31,7 @@ Se preferir canal alternativo, abra uma issue **vazia** apenas dizendo "canal pr
 - Vazamento da chave real do provedor para processos, logs, histórico de shell, arquivos ou rede.
 - Quebra do isolamento por alias (`kh-<alias>`) ou do token virtual.
 - Falhas na criptografia do cofre: AES-256-GCM, chave mestra, derivação/PIN, `Zeroize`.
-- Bypass das proteções do gateway: verificação de `Origin`, `Host` (DNS rebinding), `Sec-Fetch-Site`, `Cross-Origin-Resource-Policy`.
+- Bypass das proteções do gateway: verificação de `Origin`, `Host` (DNS rebinding), `Sec-Fetch-Site`, `Cross-Origin-Resource-Policy` e a lista de rotas permitidas (`/api/keyhybrid/*`, `/v1/*`, `/proxy/*`, `/api/health`; o painel `/_/` e as APIs nativas do PocketBase respondem 404).
 - Escalonamento de privilégio entre app desktop, gateway e CLI `kh run`.
 - Injeção de comando/SSRF no proxy multimodal ou nos endpoints internos.
 - Exposição de segredos em artefatos de release, imagens de container ou no `pb_data`.
