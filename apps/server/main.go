@@ -461,6 +461,8 @@ func reservarPortaEToken(e *core.ServeEvent) (string, error) {
 }
 
 func main() {
+	desligarCoreDump() // antes de tudo: vale para o servidor e para os filhos do kh run
+
 	// "run" é o kh run: não pode abrir pb_data ao lado do binário
 	if len(os.Args) > 1 && os.Args[1] == "run" {
 		os.Exit(runCmd(os.Args[2:]))

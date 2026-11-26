@@ -5,6 +5,8 @@ Description=KeyHybrid Gateway (cofre de chaves em 127.0.0.1:8090)
 ExecStart=%h/.keyhybrid/bin/keyhybrid-server serve --http=127.0.0.1:8090
 Restart=on-failure
 RestartSec=2
+# sem core dump: o core levaria as chaves da memória e do ambiente
+LimitCORE=0
 
 [Install]
 WantedBy=default.target
