@@ -484,6 +484,10 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "run" {
 		os.Exit(runCmd(os.Args[2:]))
 	}
+	// "list" também só fala com o gateway: aliases sem segredo, para o agente descobrir o que existe
+	if len(os.Args) > 1 && os.Args[1] == "list" {
+		os.Exit(listCmd(os.Args[2:], os.Stdout))
+	}
 
 	// vault-dump e vault-apply: backup portátil do cofre pela CLI, sem rota HTTP
 	if len(os.Args) > 1 && os.Args[1] == "vault-dump" {
