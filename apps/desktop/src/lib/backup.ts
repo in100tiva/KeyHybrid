@@ -75,3 +75,17 @@ export function formatBackupDate(iso: string): string {
     minute: "2-digit",
   });
 }
+
+const DIA_MS = 24 * 60 * 60 * 1000;
+const ALERTA_DIAS = 7;
+
+// Lembrete da tela principal (#53): nunca ou 7+ dias pede destaque, e o texto diz o motivo (não só a cor).
+// Data inválida conta como "nunca"; data no futuro (relógio adiantado) conta como hoje.
+export function backupReminder(lastAt: string | null | undefined, now: Date): { text: string; alert: boolean } {
+  const t = lastAt ? new Date(lastAt).getTime() : NaN;
+  if (Number.isNaN(t)) return { text: "Nenhum backup .khvault ainda.", alert: true };
+  const dias = Math.max(0, Math.floor((now.getTime() - t) / DIA_MS));
+  const quando = dias === 0 ? "hoje" : dias === 1 ? "há 1 dia" : `há ${dias} dias`;
+  const alert = dias >= ALERTA_DIAS;
+  return { text: `Último backup .khvault: ${quando}.${alert ? " Faça um novo." : ""}`, alert };
+}
