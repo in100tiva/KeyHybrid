@@ -100,15 +100,30 @@ func cliTokenPath() string {
 	return filepath.Join(homeDir(), ".keyhybrid", ".cli.token")
 }
 
+// Token só do /reveal, do kh run e do vault-dump/vault-apply (#44): o .cli.token do proxy não revela segredo
+func revealTokenPath() string {
+	return filepath.Join(homeDir(), ".keyhybrid", ".reveal.token")
+}
+
 // Token local de 32 bytes em hex: rotacionado a cada boot do gateway (KH-12).
 // Quem não lê ~/.keyhybrid não usa o cofre por HTTP.
 func loadOrCreateCLIToken() string {
 	path := cliTokenPath()
-	_ = os.MkdirAll(filepath.Dir(path), 0700)
 	if force := os.Getenv("KEYHYBRID_FORCE_TOKEN"); len(force) == 64 {
+		_ = os.MkdirAll(filepath.Dir(path), 0700)
 		_ = os.WriteFile(path, []byte(force), 0600)
 		return force
 	}
+	return rotacionarToken(path)
+}
+
+// Rotacionado no mesmo boot que o .cli.token, sempre aleatório
+func loadOrCreateRevealToken() string {
+	return rotacionarToken(revealTokenPath())
+}
+
+func rotacionarToken(path string) string {
+	_ = os.MkdirAll(filepath.Dir(path), 0700)
 	raw := make([]byte, 32)
 	if _, err := io.ReadFull(rand.Reader, raw); err != nil {
 		log.Fatal("[KeyHybrid] falha ao gerar token local: ", err) // nunca semente fixa
@@ -118,6 +133,12 @@ func loadOrCreateCLIToken() string {
 		log.Fatal("[KeyHybrid] falha ao gravar token local: ", err)
 	}
 	return tok
+}
+
+// Só o cabeçalho próprio, em tempo constante; Authorization e X-KeyHybrid-Token não valem aqui
+func revealTokenValid(r *http.Request, token string) bool {
+	got := r.Header.Get("X-KeyHybrid-Reveal-Token")
+	return token != "" && subtle.ConstantTimeCompare([]byte(got), []byte(token)) == 1
 }
 
 func tokenValid(r *http.Request, token string) bool {

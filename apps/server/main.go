@@ -541,18 +541,66 @@ func liberarAuthorizationProprio(r *router.Router[*core.RequestEvent]) {
 	r.Unbind(apis.DefaultRejectUnknownTokenMiddlewareId)
 }
 
-// Abre a porta ANTES de rotacionar o token local (#37). O PocketBase só faz o net.Listen
+// Segredos em claro só para o kh run (#44): exige o .reveal.token, nunca o .cli.token do proxy
+func revealHandler(app core.App, revealToken string) func(*core.RequestEvent) error {
+	return func(evt *core.RequestEvent) error {
+		if evt.Request.Header.Get("Origin") != "" {
+			return evt.ForbiddenError("Reveal não aceita requisição de navegador", nil)
+		}
+		if !revealTokenValid(evt.Request, revealToken) {
+			return evt.UnauthorizedError("Token de revelação inválido", nil)
+		}
+		var req struct {
+			Aliases []string `json:"aliases"`
+		}
+		if err := json.NewDecoder(io.LimitReader(evt.Request.Body, 64<<10)).Decode(&req); err != nil {
+			return evt.BadRequestError("JSON inválido", err)
+		}
+
+		allRecords, _ := app.FindAllRecords("vault_keys")
+		secrets := map[string]string{}
+		var missing []string
+		for _, alias := range req.Aliases {
+			var rec *core.Record
+			for _, r := range allRecords {
+				if strings.EqualFold(r.GetString("alias"), alias) {
+					rec = r
+					break
+				}
+			}
+			if rec == nil {
+				missing = append(missing, alias)
+				continue
+			}
+			secret, err := segredoDoRegistro(evt, rec)
+			if err != nil {
+				return err
+			}
+			secrets[alias] = secret
+		}
+
+		evt.Response.Header().Set("Cache-Control", "no-store")
+		if len(missing) > 0 {
+			log.Printf("[KeyHybrid] reveal: alias não cadastrado: %s\n", strings.Join(missing, ", "))
+			return evt.JSON(http.StatusNotFound, map[string]any{"message": "Alias não cadastrado", "missing": missing})
+		}
+		log.Printf("[KeyHybrid] reveal: %s\n", strings.Join(req.Aliases, ", "))
+		return evt.JSON(http.StatusOK, map[string]any{"secrets": secrets})
+	}
+}
+
+// Abre a porta ANTES de rotacionar os tokens locais (#37, #44). O PocketBase só faz o net.Listen
 // depois dos handlers de OnServe: sem isto, uma segunda instância que ia falhar no bind
 // sobrescrevia o .cli.token da instância que está atendendo e o kh run passava a ser recusado.
-func reservarPortaEToken(e *core.ServeEvent) (string, error) {
+func reservarPortaEToken(e *core.ServeEvent) (cliToken, revealToken string, _ error) {
 	if e.Server != nil && e.Listener == nil && e.Server.Addr != "" {
 		ln, err := net.Listen("tcp", e.Server.Addr)
 		if err != nil {
-			return "", fmt.Errorf("porta %s ocupada (outro KeyHybrid já está rodando?); token local mantido: %w", e.Server.Addr, err)
+			return "", "", fmt.Errorf("porta %s ocupada (outro KeyHybrid já está rodando?); tokens locais mantidos: %w", e.Server.Addr, err)
 		}
 		e.Listener = ln // o PocketBase usa este listener no lugar do próprio
 	}
-	return loadOrCreateCLIToken(), nil
+	return loadOrCreateCLIToken(), loadOrCreateRevealToken(), nil
 }
 
 // As APIs nativas do PocketBase (/api/collections, /api/superusers, /api/files...) e o
@@ -614,7 +662,7 @@ func main() {
 			e.Server.ReadTimeout = 30 * time.Second
 			e.Server.IdleTimeout = 60 * time.Second
 		}
-		cliToken, err := reservarPortaEToken(e)
+		cliToken, revealToken, err := reservarPortaEToken(e)
 		if err != nil {
 			return err
 		}
@@ -718,51 +766,8 @@ func main() {
 			return nil
 		})
 
-		// Segredos em claro só para o kh run: token local e nenhuma requisição vinda de navegador
-		e.Router.POST("/api/keyhybrid/reveal", func(evt *core.RequestEvent) error {
-			if evt.Request.Header.Get("Origin") != "" {
-				return evt.ForbiddenError("Reveal não aceita requisição de navegador", nil)
-			}
-			if !tokenValid(evt.Request, cliToken) {
-				return evt.UnauthorizedError("Token local inválido", nil)
-			}
-			var req struct {
-				Aliases []string `json:"aliases"`
-			}
-			if err := json.NewDecoder(io.LimitReader(evt.Request.Body, 64<<10)).Decode(&req); err != nil {
-				return evt.BadRequestError("JSON inválido", err)
-			}
-
-			allRecords, _ := app.FindAllRecords("vault_keys")
-			secrets := map[string]string{}
-			var missing []string
-			for _, alias := range req.Aliases {
-				var rec *core.Record
-				for _, r := range allRecords {
-					if strings.EqualFold(r.GetString("alias"), alias) {
-						rec = r
-						break
-					}
-				}
-				if rec == nil {
-					missing = append(missing, alias)
-					continue
-				}
-				secret, err := segredoDoRegistro(evt, rec)
-				if err != nil {
-					return err
-				}
-				secrets[alias] = secret
-			}
-
-			evt.Response.Header().Set("Cache-Control", "no-store")
-			if len(missing) > 0 {
-				log.Printf("[KeyHybrid] reveal: alias não cadastrado: %s\n", strings.Join(missing, ", "))
-				return evt.JSON(http.StatusNotFound, map[string]any{"message": "Alias não cadastrado", "missing": missing})
-			}
-			log.Printf("[KeyHybrid] reveal: %s\n", strings.Join(req.Aliases, ", "))
-			return evt.JSON(http.StatusOK, map[string]any{"secrets": secrets})
-		})
+		// Segredos em claro só para o kh run: token de revelação e nenhuma requisição vinda de navegador
+		e.Router.POST("/api/keyhybrid/reveal", revealHandler(app, revealToken))
 
 		proxyChatHandler := proxyChat(app, cliToken)
 

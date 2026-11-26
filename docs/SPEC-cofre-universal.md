@@ -89,7 +89,8 @@ local) não usa a chave.
 
 ### 6.2 `POST /api/keyhybrid/reveal` — só para o `kh run`
 - Corpo `{"aliases":["vercel","supabase"]}` → `{"secrets":{"vercel":"…","supabase":"…"}}`.
-- Exige `X-KeyHybrid-Token`; **recusa qualquer requisição com `Origin`** (`403`), inclusive
+- Exige `X-KeyHybrid-Reveal-Token` com o `~/.keyhybrid/.reveal.token` (#44); o `.cli.token` dá `401`.
+  **Recusa qualquer requisição com `Origin`** (`403`), inclusive
   da própria interface: navegador nunca recebe segredo em claro.
 - Alias inexistente → `404` com a lista dos que faltam. Vale para `ai` e `service`.
 - `Cache-Control: no-store`. Log só com os nomes.

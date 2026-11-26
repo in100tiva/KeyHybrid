@@ -98,7 +98,7 @@ O backup (`.khvault`, [#26](https://github.com/in100tiva/KeyHybrid/issues/26)) e
 
 **Contra o que não protege**
 
-- **Malware rodando com o seu usuário.** Ele já lê o `pb_data` e a chave mestra (no Windows, selada por DPAPI para esse mesmo usuário; no Linux, um arquivo `0600` sem selagem) e pode rodar `keyhybrid-server vault-dump` como o app faz. O backup não piora nem melhora isso.
+- **Malware rodando com o seu usuário.** Ele já lê o `pb_data` e a chave mestra (no Windows, selada por DPAPI para esse mesmo usuário; no Linux, um arquivo `0600` sem selagem) e o `.reveal.token`, e pode rodar `keyhybrid-server vault-dump` como o app faz. O backup não piora nem melhora isso.
 - **Senha previsível.** O app recusa as fracas óbvias (`aaaaaaaaaaaa`, `senha123senha`), mas não reconhece palavra de dicionário nem dado pessoal; o medidor de força é indicativo. Uma senha previsível que passa nas regras ainda cai na força bruta offline. A regra vale só para criar backup: restaurar aceita a senha que o arquivo tiver, para que backups antigos continuem abrindo.
 - **Senha perdida.** Não há recuperação, cópia da senha nem porta dos fundos.
 - **Backup antigo.** Um arquivo continua válido para sempre com a senha dele. Se ele vazar junto com a senha, gire as chaves no provedor; apagar a chave do cofre não invalida o backup.
@@ -129,7 +129,20 @@ O backup (`.khvault`, [#26](https://github.com/in100tiva/KeyHybrid/issues/26)) e
 
 **O comando `vault-dump` existe**
 
-- `keyhybrid-server vault-dump` despeja o cofre em claro no stdout e recusa apenas o stdout de terminal, para não pintar segredo na tela por engano. Qualquer processo do seu usuário pode rodá-lo com o stdout num pipe ou num arquivo. Isso não dá poder novo: o mesmo processo já poderia ler o `pb_data` e a chave mestra. Não redirecione o dump para arquivo fora do app.
+- `keyhybrid-server vault-dump` despeja o cofre em claro no stdout. Ele recusa o stdout de terminal, para não pintar segredo na tela por engano, e só roda com o token de revelação na primeira linha do stdin (veja abaixo). O `vault-apply` exige o mesmo token antes do JSON. Não redirecione o dump para arquivo fora do app.
+
+## Os dois tokens locais
+
+O gateway grava dois tokens aleatórios (32 bytes em hex, `0600`) em `~/.keyhybrid/` e troca os dois a cada boot ([#44](https://github.com/in100tiva/KeyHybrid/issues/44)):
+
+| Arquivo | Quem usa | O que libera |
+| --- | --- | --- |
+| `.cli.token` | agentes e scripts, no cabeçalho `X-KeyHybrid-Token` | `/proxy/<alias>`, `/v1` e as rotas de cadastro. Nunca devolve segredo em claro. |
+| `.reveal.token` | só o `kh run` (cabeçalho `X-KeyHybrid-Reveal-Token`) e o app desktop (1ª linha do stdin do `vault-dump`/`vault-apply`) | `POST /api/keyhybrid/reveal`, `vault-dump` e `vault-apply`, que entregam ou gravam segredo em claro. |
+
+O `/reveal` recusa o `.cli.token` com `401` e continua recusando qualquer requisição com `Origin`. A comparação é em tempo constante nos dois casos.
+
+**Limite honesto:** dois processos do mesmo usuário não se separam por completo. Um processo que consiga ler `~/.keyhybrid/.reveal.token` (ou o `pb_data` e a chave mestra) ainda tira o cofre. A separação protege contra o uso do token que a documentação manda o agente usar no proxy e contra comandos óbvios (`vault-dump | cat`, `curl /reveal` com o `.cli.token`), por exemplo de um agente enganado por prompt injection. Agentes devem receber só o `.cli.token`, nunca o `.reveal.token`.
 
 ## Nosso compromisso
 

@@ -79,7 +79,8 @@ func runCmd(args []string) int {
 		}
 	}
 
-	gw, token, code := gatewayAndToken("kh run")
+	// O /reveal só aceita o token de revelação (#44); o .cli.token fica para o kh list e o proxy
+	gw, token, code := gatewayComToken("kh run", revealTokenPath(), "token de revelação", khReiniciaServico)
 	if code != 0 {
 		return code
 	}
@@ -149,8 +150,13 @@ func usoRun(motivo string) int {
 	return 2
 }
 
-// KH_GATEWAY (só http em loopback) e o token local, compartilhados por kh run e kh list
+// KH_GATEWAY (só http em loopback) e o token local do proxy, usados pelo kh list
 func gatewayAndToken(cmd string) (string, string, int) {
+	return gatewayComToken(cmd, cliTokenPath(), "token local", khSobeServico)
+}
+
+// KH_GATEWAY e o token do arquivo path; ausente, a mensagem diz o próximo passo
+func gatewayComToken(cmd, path, nome, proximo string) (string, string, int) {
 	gw := os.Getenv("KH_GATEWAY")
 	if gw == "" {
 		gw = khDefaultGateway
@@ -160,9 +166,9 @@ func gatewayAndToken(cmd string) (string, string, int) {
 		fmt.Fprintln(os.Stderr, cmd+": KH_GATEWAY precisa ser http em loopback")
 		return "", "", 2
 	}
-	tokBytes, err := os.ReadFile(cliTokenPath())
+	tokBytes, err := os.ReadFile(path)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, cmd+": token local ausente em", cliTokenPath()+". "+khSobeServico)
+		fmt.Fprintln(os.Stderr, cmd+": "+nome+" ausente em", path+". "+proximo)
 		return "", "", 1
 	}
 	return strings.TrimRight(gw, "/"), strings.TrimSpace(string(tokBytes)), 0
@@ -177,7 +183,10 @@ func khClient() *http.Client {
 
 const khSobeServico = "Suba o serviço: systemctl --user start keyhybrid.service (ou abra o app KeyHybrid)."
 
-// Chama o gateway local; o token vai no cabeçalho e nunca é impresso. Erros saem em w com o próximo passo.
+// O .reveal.token nasce no boot (#44): um gateway de versão anterior já no ar precisa reiniciar
+const khReiniciaServico = "Reinicie o serviço: systemctl --user restart keyhybrid.service (ou reabra o app KeyHybrid)."
+
+// Chama o gateway local; o token de revelação vai no cabeçalho e nunca é impresso. Erros saem em w com o próximo passo.
 func revealSecrets(w io.Writer, gw, token string, aliases []string) (map[string]string, int) {
 	body, _ := json.Marshal(map[string][]string{"aliases": aliases})
 	req, err := http.NewRequest(http.MethodPost, gw+"/api/keyhybrid/reveal", bytes.NewReader(body))
@@ -186,7 +195,7 @@ func revealSecrets(w io.Writer, gw, token string, aliases []string) (map[string]
 		return nil, 2
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-KeyHybrid-Token", token)
+	req.Header.Set("X-KeyHybrid-Reveal-Token", token)
 	resp, err := khClient().Do(req)
 	if err != nil {
 		fmt.Fprintf(w, "kh run: KeyHybrid não está respondendo em %s. %s\n", gw, khSobeServico)
