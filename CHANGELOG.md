@@ -8,6 +8,10 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o 
 
 ### Adicionado
 
+- **`kh list`** ([#51](https://github.com/in100tiva/KeyHybrid/issues/51)): lista os aliases cadastrados com tipo, provedor e modelo padrão, sem segredo, `base_url` nem `auth_header`; `--json` para agentes e scripts.
+- **Lembrete de backup** ([#53](https://github.com/in100tiva/KeyHybrid/issues/53)): a tela principal mostra há quantos dias foi o último `.khvault` (ou que nunca houve um), com destaque a partir de 7 dias e um atalho para o backup.
+- **Uso por alias** ([#55](https://github.com/in100tiva/KeyHybrid/issues/55)): o gateway registra o último uso e o último status HTTP de cada alias no `/v1` e no `/proxy` (em memória, sem segredo) e grava uma linha de log por requisição do `/v1` (alias, modelo pedido e devolvido, status, duração). O app mostra "usado há X · HTTP N" e destaca 401/403 (chave recusada pelo provedor).
+- **CI de vulnerabilidades** ([#49](https://github.com/in100tiva/KeyHybrid/issues/49)): `govulncheck` no job Go e `cargo audit` no job Rust, com versões fixadas.
 - **Instaladores desktop**: cada release `v*` passa a publicar `KeyHybrid_<versão>_amd64.deb`, `KeyHybrid_<versão>_x64_en-US.msi` e `KeyHybrid_<versão>_x64-setup.exe` com o `keyhybrid-server` embutido, cobertos por `SHA256SUMS.txt` e pela atestação de procedência.
 - **CI do desktop em Rust**: job `Desktop Rust (Tauri)` no `.github/workflows/ci.yml`, com `cargo fmt --all -- --check` e `cargo clippy --all-targets --locked -- -D warnings` no `ubuntu-latest`, bibliotecas do Tauri v2 (WebKitGTK 4.1) e cache do Cargo.
 - **Revisão de dependências**: `.github/workflows/dependency-review.yml` comenta no PR e bloqueia merges que introduzam dependências com severidade alta.
@@ -22,6 +26,11 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o 
 
 ### Alterado
 
+- **Chave mestra no chaveiro do sistema (Linux)** ([#40](https://github.com/in100tiva/KeyHybrid/issues/40)): a chave sai do disco para o Secret Service (gnome-keyring), e o `.master.key.wrapped` passa a guardar só um marcador. A migração do arquivo antigo grava no chaveiro, lê de volta e confere antes de trocar o arquivo; qualquer falha deixa o arquivo como estava, com aviso. Com o marcador e o chaveiro trancado, o servidor espera até 60 s e falha alto, nunca cria chave nova. Sem sessão D-Bus (container), segue em arquivo com aviso em todo boot. Recuperação, se o chaveiro for recriado: o backup `.khvault`.
+- **Mensagens do `kh run`** ([#52](https://github.com/in100tiva/KeyHybrid/issues/52)): gateway fora, alias ausente (com a lista dos cadastrados) e token recusado dizem o próximo comando exato.
+- **`keyhybrid.service` endurecido** ([#50](https://github.com/in100tiva/KeyHybrid/issues/50)): `NoNewPrivileges`, `UMask=0077`, `LockPersonality`, `RestrictRealtime`, `RestrictSUIDSGID`, `SystemCallArchitectures=native` e `MemoryDenyWriteExecute`.
+- **Dependências do desktop** ([#48](https://github.com/in100tiva/KeyHybrid/issues/48)): saem `pocketbase` e `pocketbase-typegen`, que nada usava e puxava o `better-sqlite3` nativo; o `--config.dangerouslyAllowAllBuilds=true` sai da instalação, do CI e do release.
+- **Documentação da chave mestra** ([#39](https://github.com/in100tiva/KeyHybrid/issues/39)): README, SECURITY, SPEC e o app descrevem por plataforma onde a chave fica (Windows: DPAPI; Linux: chaveiro do sistema desde a #40), e que o backup portátil é o `.khvault`.
 - **PocketBase no novo endereço**: o módulo saiu do GitHub (repositório arquivado) para `ganigeorgiev.com/pocketbase/pocketbase`; o gateway sobe da v0.40.6 para a v0.42.3 (com `dbx` e `ozzo-validation` também nos caminhos novos) e passa a compilar com Go 1.27.4 (`toolchain` no `go.mod`). A v0.42 trouxe um middleware global que responde 401 a todo `Authorization` que não seja token do PocketBase: ele é desligado no gateway, porque o `/v1` e o `kh run` usam `Bearer kh-<alias>` e o token local, e um teste trava essa regra para as próximas atualizações do Dependabot.
 - **`workflow_dispatch` do `release.yml`**: disparos manuais passam a só ensaiar o build dos binários e instaladores (gerando os artifacts da execução), sem publicar uma release fora de tags `v*`; tags de pré-release publicam só o gateway.
 - **SvelteKit 3**: interface migrada de `@sveltejs/kit` 2.x para 3.4 e de `@sveltejs/adapter-static` 3.x para 4.x. A configuração deixou de ficar em `svelte.config.js` (arquivo removido) e passou para o plugin `sveltekit()` em `apps/desktop/vite.config.js`; o `tsconfig.json` agora estende o `$app/tsconfig` gerado pelo próprio kit.
@@ -32,11 +41,20 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o 
 
 ### Corrigido
 
+- **Troca silenciosa de modelo** ([#42](https://github.com/in100tiva/KeyHybrid/issues/42)): o `/v1` não reenvia mais com `openrouter/auto` quando o provedor devolve 404; o erro volta ao cliente como veio. O `GET /api/keyhybrid/keys` passou a ser só leitura: ele ativava a primeira chave e regravava o `default_model`. A ativação automática fica no cadastro e na exclusão.
+- **Cofre ilegível em silêncio** ([#41](https://github.com/in100tiva/KeyHybrid/issues/41)): sem a chave mestra e com o `data.db` presente, o servidor recusa subir em vez de criar chave nova. Segredo que não decifra vira 500 claro no `/proxy`, no `/v1` e no `/reveal`, nunca cabeçalho vazio ao provedor. A chave é lida uma vez no boot, respeitando o `--dir`, e a restauração recusa segredo já cifrado.
+- **Exclusão de chave com um clique** ([#54](https://github.com/in100tiva/KeyHybrid/issues/54)): o app pede confirmação inline, que nomeia o alias.
 - **Token local trocado por uma segunda instância do gateway** ([#37](https://github.com/in100tiva/KeyHybrid/issues/37)): o gateway agora abre a porta 8090 antes de rotacionar o `~/.keyhybrid/.cli.token`. Uma instância que encontra a porta ocupada sai com erro claro e não invalida o token de quem está atendendo, que antes deixava o `kh run` e o `/proxy` com "token recusado". No Linux, com o `keyhybrid.service` habilitado, o app e o `run_linux.sh` passam a pedir `systemctl --user start` em vez de subir um servidor próprio, que segurava a porta com o binário antigo durante atualizações. A ordem segura de atualização está em `docs/USAGE.md`.
 - **Lints do Rust**: os avisos que o `cargo clippy -D warnings` acusava em `vault.rs`, `lib.rs` e `gateway.rs` foram resolvidos (`if` aninhados colapsados com *let chains* do Rust 2024 e uso de `is_multiple_of`); o comando `save_vault_key` mantém a assinatura plana exigida pelo `invoke` do Tauri.
 
 ### Segurança
 
+- **Token de revelação separado** ([#44](https://github.com/in100tiva/KeyHybrid/issues/44)): o `/api/keyhybrid/reveal` aceita só o novo `~/.keyhybrid/.reveal.token` (cabeçalho `X-KeyHybrid-Reveal-Token`), lido por dentro pelo `kh run`. O `.cli.token`, usado no `/proxy`, deixa de revelar segredo. `vault-dump` e `vault-apply` exigem esse token na 1ª linha do stdin, e o app o envia. Os dois tokens só são trocados depois de reservar a porta.
+- **`/v1` com autenticação de verdade** ([#43](https://github.com/in100tiva/KeyHybrid/issues/43)): `Bearer kh-<alias>` de um alias existente continua funcionando sem token; alias desconhecido dá 404 com a lista; qualquer outro Bearer, ou só `X-Provider`, exige o token local.
+- **Rotas nativas do PocketBase fechadas** ([#46](https://github.com/in100tiva/KeyHybrid/issues/46)): o build usa `-tags no_ui` (sem painel `/_/`), e tudo fora de `/api/keyhybrid/*`, `/v1/*`, `/proxy/*` e do health responde 404.
+- **Listagem sem token reduzida** ([#47](https://github.com/in100tiva/KeyHybrid/issues/47)): sem o token local, o `GET /api/keyhybrid/keys` devolve só id, alias e tipo.
+- **Sem core dump** ([#45](https://github.com/in100tiva/KeyHybrid/issues/45)): o binário zera o `RLIMIT_CORE` (soft e hard) ao iniciar, o que cobre o servidor e os filhos do `kh run`, e o `keyhybrid.service` usa `LimitCORE=0`.
+- **Senha do backup** ([#56](https://github.com/in100tiva/KeyHybrid/issues/56)): ao criar um `.khvault`, senhas de 12 a 15 caracteres precisam de 3 classes, e qualquer senha precisa de 6 caracteres distintos; restaurar aceita backups antigos. SECURITY e USAGE explicam que o PIN só tranca a interface.
 - Os avisos do GitHub Advisory que atingiam a linha 2.x do `@sveltejs/kit` deixam de se aplicar, e o `cookie` transitivo passa a ser resolvido em `2.0.2`.
 - **Chave da OpenAI não vai mais para a OpenRouter**: no cadastro manual, uma chave `sk-proj-`/`sk-svcacct-` colada ficava com o provedor padrão (`openrouter`) e o gateway a enviaria à OpenRouter. Agora o prefixo é reconhecido e a chave vira o serviço `openai`, com destino fixo `https://api.openai.com`.
 
