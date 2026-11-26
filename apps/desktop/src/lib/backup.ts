@@ -52,9 +52,15 @@ export function passphraseStrength(p: string): { score: number; label: string } 
   return { score, label: LABELS[score] };
 }
 
-// Mensagem de erro para mostrar na tela, ou null quando a senha pode ser usada
+// Mensagem de erro para mostrar na tela, ou null quando a senha pode ser usada.
+// Espelha check_passphrase do backup.rs (a fonte da verdade): mesmas regras, mesmas mensagens.
 export function validatePassphrase(p: string, confirmacao: string): string | null {
-  if ([...p].length < MIN_PASSPHRASE) return "A senha do backup precisa de pelo menos 12 caracteres.";
+  const chars = [...p];
+  if (chars.length < MIN_PASSPHRASE) return "A senha do backup precisa de pelo menos 12 caracteres.";
+  if (new Set(chars).size < 6) return "A senha do backup precisa de pelo menos 6 caracteres diferentes.";
+  const tipos = [/\p{Lowercase}/u, /\p{Uppercase}/u, /\p{N}/u, /[^\p{Alphabetic}\p{N}]/u].filter((re) => re.test(p)).length;
+  if (chars.length < 16 && tipos < 3)
+    return "Com menos de 16 caracteres, a senha do backup precisa misturar 3 tipos: minúsculas, maiúsculas, números e símbolos (ou espaço).";
   if (p !== confirmacao) return "As duas senhas não são iguais.";
   return null;
 }

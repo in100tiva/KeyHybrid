@@ -26,6 +26,9 @@ const ERR_CORROMPIDO: &str = "Arquivo corrompido ou não é um backup do KeyHybr
 const ERR_VERSAO_NOVA: &str = "Backup de versão mais nova: atualize o KeyHybrid para restaurar.";
 const ERR_SENHA: &str = "Senha incorreta ou arquivo alterado.";
 const ERR_SENHA_CURTA: &str = "A senha do backup precisa de pelo menos 12 caracteres.";
+const ERR_SENHA_REPETITIVA: &str =
+    "A senha do backup precisa de pelo menos 6 caracteres diferentes.";
+const ERR_SENHA_POUCOS_TIPOS: &str = "Com menos de 16 caracteres, a senha do backup precisa misturar 3 tipos: minúsculas, maiúsculas, números e símbolos (ou espaço).";
 const ERR_BLOQUEADO: &str =
     "Cofre bloqueado. Digite seu PIN de 6 dígitos para autorizar o backup ou a restauração.";
 const ERR_SERVIDOR_ANTIGO: &str =
@@ -194,6 +197,28 @@ fn derive_key(passphrase: &str, salt: &[u8]) -> Result<Zeroizing<[u8; 32]>, Stri
         .hash_password_into(passphrase.as_bytes(), salt, key.as_mut())
         .map_err(|e| format!("Falha ao derivar a chave do backup: {e}"))?;
     Ok(key)
+}
+
+// Regra de senha para criar backup (a UI espelha em src/lib/backup.ts). Restaurar não aplica:
+// backups antigos, feitos só com o mínimo de 12, têm de continuar abrindo.
+fn check_passphrase(passphrase: &str) -> Result<(), String> {
+    let chars: Vec<char> = passphrase.chars().collect();
+    if chars.len() < MIN_PASSPHRASE {
+        return Err(ERR_SENHA_CURTA.to_string());
+    }
+    if chars.iter().collect::<std::collections::HashSet<_>>().len() < 6 {
+        return Err(ERR_SENHA_REPETITIVA.to_string());
+    }
+    let tipos = [
+        chars.iter().any(|c| c.is_lowercase()),
+        chars.iter().any(|c| c.is_uppercase()),
+        chars.iter().any(|c| c.is_numeric()),
+        chars.iter().any(|c| !c.is_alphabetic() && !c.is_numeric()),
+    ];
+    if chars.len() < 16 && tipos.iter().filter(|&&t| t).count() < 3 {
+        return Err(ERR_SENHA_POUCOS_TIPOS.to_string());
+    }
+    Ok(())
 }
 
 fn seal(plaintext: &[u8], passphrase: &str) -> Result<Vec<u8>, String> {
@@ -455,9 +480,7 @@ fn do_backup(
     path: &Path,
     passphrase: &str,
 ) -> Result<BackupResult, String> {
-    if passphrase.chars().count() < MIN_PASSPHRASE {
-        return Err(ERR_SENHA_CURTA.to_string());
-    }
+    check_passphrase(passphrase)?;
     let vault = dump_vault(bin, home)?;
     let items = count_entries(&vault)?.entries.len();
     let created_at = rfc3339(utc_now());
@@ -765,6 +788,65 @@ mod tests {
         assert_eq!(seal(b"x", "curta").err().unwrap(), ERR_SENHA_CURTA);
         // 11 caracteres com acento (mais de 12 bytes) ainda é curta
         assert_eq!(seal(b"x", "ááááááááááá").err().unwrap(), ERR_SENHA_CURTA);
+    }
+
+    #[test]
+    fn senha_fraca_recusada_no_backup() {
+        assert_eq!(
+            check_passphrase("aaaaaaaaaaaa").err().unwrap(),
+            ERR_SENHA_REPETITIVA
+        );
+        assert_eq!(
+            check_passphrase("senha123senha").err().unwrap(),
+            ERR_SENHA_POUCOS_TIPOS
+        );
+        assert_eq!(
+            check_passphrase("abcabcabcabcabcabcab").err().unwrap(),
+            ERR_SENHA_REPETITIVA
+        );
+        assert_eq!(check_passphrase("curta").err().unwrap(), ERR_SENHA_CURTA);
+        assert!(check_passphrase("Cavalo-Bateria-Grampo").is_ok());
+        assert!(check_passphrase("cavalo bateria grampo correto").is_ok());
+        assert!(check_passphrase("Senha123senha").is_ok());
+        assert!(check_passphrase(SENHA).is_ok());
+        // A regra fica no backup: nada é lido nem gravado com senha fraca
+        let d = tmp_dir("fraca");
+        let arquivo = d.join("b.khvault");
+        assert_eq!(
+            do_backup(
+                &FakeRunner::com(tres_chaves()),
+                &d,
+                &arquivo,
+                "senha123senha"
+            )
+            .err()
+            .unwrap(),
+            ERR_SENHA_POUCOS_TIPOS
+        );
+        assert!(!arquivo.exists());
+        // Restaurar não aplica a regra: um backup antigo com senha fraca continua abrindo,
+        // e a cópia de segurança do "substituir" sai com a mesma senha
+        let bin = FakeRunner::com(tres_chaves());
+        let antigo = d.join("antigo.khvault");
+        let sealed = seal_vault(
+            dump_vault(&bin, &d).unwrap(),
+            "senha123senha",
+            "2026-01-01T00:00:00Z",
+        )
+        .unwrap();
+        fs::write(&antigo, sealed).unwrap();
+        let r = do_restore(
+            &bin,
+            &d,
+            &antigo,
+            "senha123senha",
+            "replace",
+            Some("SUBSTITUIR"),
+        )
+        .unwrap();
+        assert_eq!(r.total_after, 3);
+        assert!(r.safety_backup.is_some());
+        let _ = fs::remove_dir_all(&d);
     }
 
     #[test]
