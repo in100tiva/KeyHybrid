@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -271,6 +273,20 @@ func applyVault(app core.App, doc vaultDoc, mode string, dryRun bool) (applyRepo
 	return rep, nil
 }
 
+// A primeira linha do stdin precisa ser o .reveal.token (#44): sem ele, o comando não toca no cofre
+func exigirRevealToken(r *bufio.Reader) error {
+	arq, err := os.ReadFile(revealTokenPath())
+	esperado := strings.TrimSpace(string(arq))
+	if err != nil || esperado == "" {
+		return errors.New("token de revelação ausente; abra o KeyHybrid uma vez")
+	}
+	linha, _ := r.ReadSlice('\n')
+	if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(string(linha))), []byte(esperado)) != 1 {
+		return errors.New("token de revelação inválido na primeira linha do stdin")
+	}
+	return nil
+}
+
 // kh vault-dump: despeja o cofre em claro no stdout (só para o app desktop, via pipe)
 func vaultDumpCmd(args []string) int {
 	if len(args) > 0 {
@@ -280,6 +296,10 @@ func vaultDumpCmd(args []string) int {
 	}
 	if isTerminal(os.Stdout) {
 		fmt.Fprintln(os.Stderr, "vault-dump só roda pelo app desktop (stdout é um terminal)")
+		return 2
+	}
+	if err := exigirRevealToken(bufio.NewReader(os.Stdin)); err != nil {
+		fmt.Fprintln(os.Stderr, "vault-dump:", err)
 		return 2
 	}
 	app, err := abrirVault(false)
@@ -309,7 +329,7 @@ func vaultDumpCmd(args []string) int {
 
 func usoVaultApply(motivo string) int {
 	fmt.Fprintln(os.Stderr, "vault-apply:", motivo)
-	fmt.Fprintln(os.Stderr, "uso: keyhybrid-server vault-apply --mode merge|replace [--dry-run] < dump.json")
+	fmt.Fprintln(os.Stderr, "uso: keyhybrid-server vault-apply --mode merge|replace [--dry-run] (stdin: token de revelação na 1ª linha, depois o JSON)")
 	return 2
 }
 
@@ -340,8 +360,13 @@ func vaultApplyCmd(args []string) int {
 		fmt.Fprintln(os.Stderr, "vault-apply: a entrada é um terminal; envie o JSON pelo pipe")
 		return 2
 	}
+	entrada := bufio.NewReader(os.Stdin)
+	if err := exigirRevealToken(entrada); err != nil {
+		fmt.Fprintln(os.Stderr, "vault-apply:", err)
+		return 2
+	}
 
-	raw, err := io.ReadAll(io.LimitReader(os.Stdin, vaultMaxInput+1))
+	raw, err := io.ReadAll(io.LimitReader(entrada, vaultMaxInput+1))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "vault-apply: falha ao ler a entrada")
 		return 1

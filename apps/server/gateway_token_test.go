@@ -22,6 +22,10 @@ func TestSegundaInstanciaNaoTrocaToken(t *testing.T) {
 	if err := os.WriteFile(cliTokenPath(), []byte(tokenVivo), 0600); err != nil {
 		t.Fatal(err)
 	}
+	const revealVivo = "reveal-da-instancia-que-esta-atendendo"
+	if err := os.WriteFile(revealTokenPath(), []byte(revealVivo), 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	viva, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -30,7 +34,7 @@ func TestSegundaInstanciaNaoTrocaToken(t *testing.T) {
 	addr := viva.Addr().String()
 
 	e := &core.ServeEvent{Server: &http.Server{Addr: addr}}
-	if _, err := reservarPortaEToken(e); err == nil {
+	if _, _, err := reservarPortaEToken(e); err == nil {
 		t.Fatal("porta ocupada: esperava erro")
 	}
 	if e.Listener != nil {
@@ -39,10 +43,13 @@ func TestSegundaInstanciaNaoTrocaToken(t *testing.T) {
 	if got, _ := os.ReadFile(cliTokenPath()); string(got) != tokenVivo {
 		t.Fatalf("token trocado por uma instância que não subiu: %q", got)
 	}
+	if got, _ := os.ReadFile(revealTokenPath()); string(got) != revealVivo {
+		t.Fatalf("reveal token trocado por uma instância que não subiu: %q", got)
+	}
 
-	// Porta livre: a instância reserva a porta e só então rotaciona o token
+	// Porta livre: a instância reserva a porta e só então rotaciona os dois tokens
 	_ = viva.Close()
-	tok, err := reservarPortaEToken(e)
+	tok, rev, err := reservarPortaEToken(e)
 	if err != nil {
 		t.Fatalf("porta livre: %v", err)
 	}
@@ -52,5 +59,8 @@ func TestSegundaInstanciaNaoTrocaToken(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(cliTokenPath()); tok == tokenVivo || string(got) != tok {
 		t.Fatalf("token não rotacionado ou arquivo divergente")
+	}
+	if got, _ := os.ReadFile(revealTokenPath()); rev == revealVivo || rev == tok || string(got) != rev {
+		t.Fatalf("reveal token não rotacionado, igual ao .cli.token ou arquivo divergente")
 	}
 }

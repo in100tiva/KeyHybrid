@@ -140,6 +140,8 @@ kh run --env VERCEL_TOKEN=<alias> -- vercel deploy
 
 Fora de terminal (agente, pipe, log) o segredo sai mascarado como `****`; em terminal interativo a saída passa direto.
 
+O agente usa só o `~/.keyhybrid/.cli.token` (proxy, `/v1`). O `kh run` lê sozinho o `~/.keyhybrid/.reveal.token`, o único aceito no `/api/keyhybrid/reveal`; nunca passe esse arquivo a um agente nem o use no proxy. Os dois mudam a cada boot do gateway: depois de atualizar o KeyHybrid, reinicie o gateway antes do primeiro `kh run`.
+
 **`kh list`** mostra os aliases cadastrados, para o agente saber o que pode pedir ao `kh run` sem abrir o app:
 
 ```bash
@@ -266,8 +268,10 @@ O texto decifrado é este envelope JSON (segredos de exemplo, falsos):
 
 O app desktop não lê o banco diretamente: ele chama o `keyhybrid-server` com o mesmo `KEYHYBRID_HOME` e troca o JSON do campo `vault` por pipe. Não existe rota HTTP de backup, export ou import no gateway.
 
+Os dois comandos exigem, na **primeira linha do stdin**, o conteúdo de `~/.keyhybrid/.reveal.token` (gerado no boot do gateway). Sem ele, ou com o `.cli.token` no lugar, saem com código `2` sem tocar no cofre. O app envia o token sozinho; se o arquivo não existe, abra ou reinicie o gateway.
+
 - `keyhybrid-server vault-dump` escreve o cofre **em claro** no stdout, no formato `{"format":"keyhybrid-vault","version":1,"entries":[…]}`. Não aceita argumentos e se recusa a rodar com o stdout num terminal. Se o cofre não existe, sai com código 1 (*"cofre não encontrado em <pasta>"*) sem criar pasta, banco nem chave mestra. Redirecionar para arquivo funciona, mas grava os segredos em claro no disco: não faça isso fora do app.
-- `keyhybrid-server vault-apply --mode merge|replace [--dry-run] < dump.json` lê esse mesmo JSON do stdin (até 16 MiB), valida e grava numa transação. Recusa stdin de terminal. Com `--dry-run`, só calcula o resultado (é o que a prévia usa) e, sem cofre, calcula contra um cofre vazio sem criar nada; só a aplicação de verdade cria o cofre numa instalação limpa. No stdout devolve o relatório, sem segredos:
+- `keyhybrid-server vault-apply --mode merge|replace [--dry-run]` lê, depois da linha do token, esse mesmo JSON do stdin (até 16 MiB), valida e grava numa transação. Recusa stdin de terminal. Com `--dry-run`, só calcula o resultado (é o que a prévia usa) e, sem cofre, calcula contra um cofre vazio sem criar nada; só a aplicação de verdade cria o cofre numa instalação limpa. No stdout devolve o relatório, sem segredos:
 
 ```json
 {"mode":"merge","dry_run":false,"added":["openrouter"],"conflicts":["supabase"],"removed":0,"total_after":2}
@@ -277,7 +281,7 @@ O app desktop não lê o banco diretamente: ele chama o `keyhybrid-server` com o
 | --- | --- |
 | `0` | Sucesso |
 | `1` | Falha: cofre não abriu, chave não decifrou, entrada ilegível, JSON inválido, entrada maior que 16 MiB, chave inválida, apelido repetido ou erro na transação |
-| `2` | Uso errado: argumento desconhecido, `--mode` ausente ou inválido, stdout (dump) ou stdin (apply) é um terminal |
+| `2` | Uso errado: argumento desconhecido, `--mode` ausente ou inválido, stdout (dump) ou stdin (apply) é um terminal, token de revelação ausente ou inválido na 1ª linha do stdin |
 | `3` | `format`/`version` do dump não suportado |
 
 As mensagens vão para o stderr e nunca contêm segredo; o app mostra a última linha delas.
@@ -298,6 +302,7 @@ As mensagens vão para o stderr e nunca contêm segredo; o app mostra a última 
 | Cofre bloqueado. Digite seu PIN de 6 dígitos para autorizar o backup ou a restauração. | O cofre tem PIN e está bloqueado. |
 | Atualize o KeyHybrid: o servidor instalado não tem o comando de backup. | O `keyhybrid-server` ao lado do app é de uma versão sem `vault-dump`/`vault-apply`. |
 | Servidor do KeyHybrid não encontrado ao lado do app. | O binário do gateway não foi achado. |
+| Token de revelação ausente: abra ou reinicie o gateway do KeyHybrid e tente de novo. | Não existe `~/.keyhybrid/.reveal.token`: o gateway desta versão ainda não subiu nenhuma vez. |
 | O servidor recusou a operação (`<código>`): `<motivo>` | O `keyhybrid-server` saiu com erro; o motivo é a última linha do stderr (ex.: `vault-apply: chave "x" inválida: …`). |
 | Não foi possível salvar o backup / a cópia de segurança: … | Falha de disco ou permissão no destino. |
 | Histórico de backup ilegível (backup-status.json). | O arquivo de status foi editado à mão ou corrompeu; apague-o para recomeçar o histórico. |

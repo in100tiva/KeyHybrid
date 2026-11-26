@@ -33,6 +33,8 @@ const ERR_BLOQUEADO: &str =
     "Cofre bloqueado. Digite seu PIN de 6 dígitos para autorizar o backup ou a restauração.";
 const ERR_SERVIDOR_ANTIGO: &str =
     "Atualize o KeyHybrid: o servidor instalado não tem o comando de backup.";
+const ERR_SEM_TOKEN: &str =
+    "Token de revelação ausente: abra ou reinicie o gateway do KeyHybrid e tente de novo.";
 
 #[derive(Serialize)]
 pub struct BackupResult {
@@ -270,6 +272,19 @@ fn open(data: &[u8], passphrase: &str) -> Result<Zeroizing<Vec<u8>>, String> {
         .map_err(|_| ERR_SENHA.to_string())
 }
 
+/// Token de revelação (#44), rotacionado no boot do gateway: o vault-dump e o vault-apply
+/// só rodam com ele na primeira linha do stdin
+fn reveal_token(home: &Path) -> Result<Zeroizing<String>, String> {
+    let lido = Zeroizing::new(
+        fs::read_to_string(home.join(".keyhybrid").join(".reveal.token")).unwrap_or_default(),
+    );
+    let tok = lido.trim();
+    if tok.is_empty() {
+        return Err(ERR_SEM_TOKEN.to_string());
+    }
+    Ok(Zeroizing::new(tok.to_string()))
+}
+
 /// Roda o servidor Go com o mesmo KEYHYBRID_HOME do app e devolve o stdout
 fn run_server(
     bin: &Path,
@@ -277,6 +292,7 @@ fn run_server(
     args: &[&str],
     stdin: Option<&[u8]>,
 ) -> Result<Zeroizing<Vec<u8>>, String> {
+    let token = reveal_token(home)?;
     let mut cmd = Command::new(bin);
     cmd.args(args)
         .env("KEYHYBRID_HOME", home)
@@ -292,11 +308,15 @@ fn run_server(
         .spawn()
         .map_err(|e| format!("Não foi possível iniciar o servidor do KeyHybrid: {e}"))?;
     let mut pipe = child.stdin.take();
-    if let (Some(p), Some(bytes)) = (pipe.as_mut(), stdin) {
+    if let Some(p) = pipe.as_mut() {
         // O filho pode recusar a entrada e fechar o pipe antes; o código de saída explica
-        let _ = p.write_all(bytes);
+        let _ = p
+            .write_all(token.as_bytes())
+            .and_then(|_| p.write_all(b"\n"))
+            .and_then(|_| p.write_all(stdin.unwrap_or_default()));
     }
     drop(pipe);
+    drop(token);
     // stderr em outra thread para o filho não travar com o pipe cheio
     let mut err_pipe = child.stderr.take();
     let err_thread = std::thread::spawn(move || {
@@ -709,6 +729,23 @@ mod tests {
         d
     }
 
+    fn com_token(d: &Path) {
+        fs::create_dir_all(d.join(".keyhybrid")).unwrap();
+        fs::write(d.join(".keyhybrid").join(".reveal.token"), "tok-de-teste\n").unwrap();
+    }
+
+    #[test]
+    fn reveal_token_le_o_arquivo_e_falha_sem_ele() {
+        let d = tmp_dir("token");
+        assert_eq!(reveal_token(&d).err().unwrap(), ERR_SEM_TOKEN);
+        // Sem token, o servidor nem é iniciado
+        let sem = run_server(Path::new("/nao/existe"), &d, &["vault-dump"], None);
+        assert_eq!(sem.err().unwrap(), ERR_SEM_TOKEN);
+        com_token(&d);
+        assert_eq!(reveal_token(&d).unwrap().as_str(), "tok-de-teste");
+        let _ = fs::remove_dir_all(&d);
+    }
+
     #[test]
     fn escrita_atomica_substitui_e_nao_deixa_part() {
         let d = tmp_dir("atomica");
@@ -1101,6 +1138,8 @@ mod tests {
         let bin = PathBuf::from(bin);
         let origem = tmp_dir("origem");
         let destino = tmp_dir("destino");
+        com_token(&origem);
+        com_token(&destino);
         let doc = serde_json::json!({"format":"keyhybrid-vault","version":1,"entries":[
             {"alias":"or-teste","provider":"openrouter","kind":"ai","secret":"sk-or-v1-teste-0000000000000000",
              "base_url":"","default_model":"openrouter/auto","active":true,"auth_header":"","auth_prefix":""},
