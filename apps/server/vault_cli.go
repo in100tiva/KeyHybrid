@@ -73,7 +73,9 @@ func abrirVault(criar bool) (core.App, error) {
 			return nil, fmt.Errorf("%w em %s", errCofreAusente, dir)
 		}
 	}
-	getOrCreateMasterKey()
+	if err := carregarChaveMestra(dir); err != nil {
+		return nil, err
+	}
 	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: dir})
 	vincularBootstrapVaultKeys(app)
 	if err := app.Bootstrap(); err != nil {

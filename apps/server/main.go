@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -19,6 +20,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"ganigeorgiev.com/pocketbase/pocketbase"
@@ -78,7 +80,10 @@ func onlyAI(recs []*core.Record) []*core.Record {
 func keyView(rec *core.Record, authorized bool) KeySafeView {
 	masked := "••••••••"
 	if authorized && rec.GetString("secret_key") != "" {
-		masked = maskSecret(decryptSecretAtRest(rec.GetString("secret_key")))
+		// segredo que não decifra fica só com a máscara; quem usa o segredo responde 500
+		if plain, err := decryptSecretAtRest(rec.GetString("secret_key")); err == nil {
+			masked = maskSecret(plain)
+		}
 	}
 	v := KeySafeView{
 		Id:         rec.Id,
@@ -110,12 +115,46 @@ func maskSecret(secret string) string {
 	return "••••••••" + s[len(s)-4:]
 }
 
-// Chave mestra local de 256 bits para criptografia AES-256-GCM em repouso no SQLite (Windows & Linux)
-func getOrCreateMasterKey() []byte {
+// Chave mestra local de 256 bits (AES-256-GCM em repouso no SQLite), lida uma vez e mantida em memória
+var (
+	chaveMestraMu sync.RWMutex
+	chaveMestra   []byte
+)
+
+// carregarChaveMestra roda no boot (e ao abrir o cofre pela CLI), já com o dataDir real.
+// Sem a chave e com <dataDir>/data.db no disco, recusa: chave nova deixaria o cofre inteiro ilegível.
+func carregarChaveMestra(dataDir string) error {
 	dir := filepath.Join(homeDir(), ".keyhybrid")
+	if !chaveNoDisco(dir) && existeOuIncerto(filepath.Join(dataDir, "data.db")) {
+		// o vault-apply também cai aqui: restaurar o .khvault exige tirar o cofre ilegível do caminho
+		return fmt.Errorf("chave mestra ausente em %s; o cofre existente em %s não pode ser decifrado; restaure o arquivo .master.key.wrapped nessa pasta, ou mova a pasta %s para outro lugar e restaure o backup .khvault pelo app", dir, dataDir, dataDir)
+	}
 	_ = os.MkdirAll(dir, 0700)
 	_ = os.Chmod(dir, 0700)
-	return loadOrCreateMasterKey(dir)
+	k := loadOrCreateMasterKey(dir)
+	chaveMestraMu.Lock()
+	chaveMestra = k
+	chaveMestraMu.Unlock()
+	return nil
+}
+
+// Na dúvida (erro que não é "não existe"), conta como existente: melhor recusar que criar chave nova
+func existeOuIncerto(path string) bool {
+	_, err := os.Stat(path)
+	return !errors.Is(err, fs.ErrNotExist)
+}
+
+func chaveNoDisco(dir string) bool {
+	return existeOuIncerto(filepath.Join(dir, ".master.key.wrapped")) || existeOuIncerto(filepath.Join(dir, ".master.key"))
+}
+
+func chaveMestraAtual() ([]byte, error) {
+	chaveMestraMu.RLock()
+	defer chaveMestraMu.RUnlock()
+	if chaveMestra == nil {
+		return nil, errors.New("chave mestra não carregada")
+	}
+	return chaveMestra, nil
 }
 
 // Só gera chave nova se o arquivo NÃO existe: trocar uma chave ilegível
@@ -217,7 +256,10 @@ func encryptSecretAtRest(plain string) (string, error) {
 	if plain == "" || strings.HasPrefix(plain, "enc:v1:") {
 		return plain, nil
 	}
-	key := getOrCreateMasterKey()
+	key, err := chaveMestraAtual()
+	if err != nil {
+		return "", err
+	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", err
@@ -242,14 +284,21 @@ func wipeBytes(b []byte) {
 
 func decryptSecretAtRestBytes(stored string) ([]byte, error) {
 	stored = strings.TrimSpace(stored)
+	if stored == "" {
+		return []byte{}, nil
+	}
+	// Texto puro só existe antes da migração do boot; em runtime, sem prefixo é erro
 	if !strings.HasPrefix(stored, "enc:v1:") {
-		return []byte(stored), nil
+		return nil, errors.New("segredo sem o prefixo enc:v1:")
 	}
 	raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(stored, "enc:v1:"))
 	if err != nil {
 		return nil, err
 	}
-	key := getOrCreateMasterKey()
+	key, err := chaveMestraAtual()
+	if err != nil {
+		return nil, err
+	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -267,13 +316,32 @@ func decryptSecretAtRestBytes(stored string) ([]byte, error) {
 	return plain, nil
 }
 
-func decryptSecretAtRest(stored string) string {
+func decryptSecretAtRest(stored string) (string, error) {
 	b, err := decryptSecretAtRestBytes(stored)
 	if err != nil {
-		return ""
+		return "", err
 	}
 	defer wipeBytes(b)
-	return string(b)
+	return string(b), nil
+}
+
+// A resposta 500 já foi escrita quando este erro volta: o handler só o devolve
+var errSegredoIlegivel = errors.New("segredo não decifra")
+
+// segredoDoRegistro decifra ou responde 500 claro; nunca entrega string vazia para ir ao provedor
+func segredoDoRegistro(evt *core.RequestEvent, rec *core.Record) (string, error) {
+	s, err := decryptSecretAtRest(rec.GetString("secret_key"))
+	if err == nil {
+		return s, nil
+	}
+	alias := rec.GetString("alias")
+	log.Printf("[KeyHybrid] o segredo do alias %s não decifra: %v\n", alias, err)
+	if jerr := evt.JSON(http.StatusInternalServerError, map[string]string{
+		"error": "o segredo do alias " + alias + " não decifra (chave mestra trocada?)",
+	}); jerr != nil {
+		return "", jerr
+	}
+	return "", errSegredoIlegivel
 }
 
 // A API da Anthropic usa o id puro ("claude-…"), sem o prefixo de roteamento da OpenRouter
@@ -405,6 +473,10 @@ func validarChave(req *KeyCreateRequest) (baseURL, authHeader, authPrefix string
 	if req.Alias == "" || req.SecretKey == "" {
 		return "", "", "", errors.New("O nome (alias) e a chave secreta são obrigatórios")
 	}
+	// O dump sai em claro: segredo já cifrado viria de outra chave mestra e nunca decifraria aqui
+	if strings.HasPrefix(req.SecretKey, "enc:v1:") {
+		return "", "", "", errors.New("a chave secreta já vem cifrada (enc:v1:); use o valor em claro")
+	}
 	if req.Provider == "" {
 		req.Provider = "openrouter"
 		if req.Kind == "service" {
@@ -504,9 +576,11 @@ func main() {
 
 	log.Printf("[KeyHybrid] keyhybrid-server %s", version)
 
-	getOrCreateMasterKey() // chave ilegível para o boot, não uma requisição no meio
-
+	// NewWithConfig já lê o --dir: a chave sai depois, com o dataDir real, e uma chave ilegível para o boot
 	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: dataDir()})
+	if err := carregarChaveMestra(app.DataDir()); err != nil {
+		log.Fatal("[KeyHybrid] ", err)
+	}
 
 	// 1. Inicializar coleção "vault_keys" no SQLite
 	vincularBootstrapVaultKeys(app)
@@ -759,7 +833,11 @@ func main() {
 			if authName == "" {
 				authName, authPrefix = "Authorization", "Bearer "
 			}
-			status := forwardToService(evt.Response, evt.Request, target, authName, authPrefix+decryptSecretAtRest(rec.GetString("secret_key")))
+			secret, err := segredoDoRegistro(evt, rec)
+			if err != nil {
+				return err
+			}
+			status := forwardToService(evt.Response, evt.Request, target, authName, authPrefix+secret)
 			log.Printf("[KeyHybrid] proxy %s %s /%s -> %d\n", alias, evt.Request.Method, rest, status)
 			return nil
 		})
@@ -794,7 +872,11 @@ func main() {
 					missing = append(missing, alias)
 					continue
 				}
-				secrets[alias] = decryptSecretAtRest(rec.GetString("secret_key"))
+				secret, err := segredoDoRegistro(evt, rec)
+				if err != nil {
+					return err
+				}
+				secrets[alias] = secret
 			}
 
 			evt.Response.Header().Set("Cache-Control", "no-store")
@@ -864,7 +946,10 @@ func main() {
 				return evt.NotFoundError("Chave ou provedor não encontrado no cofre", nil)
 			}
 
-			secretKey := decryptSecretAtRest(matchedRecord.GetString("secret_key"))
+			secretKey, err := segredoDoRegistro(evt, matchedRecord)
+			if err != nil {
+				return err
+			}
 			baseURL := matchedRecord.GetString("base_url")
 			defaultModel := matchedRecord.GetString("default_model")
 
@@ -1071,7 +1156,10 @@ func main() {
 			if matchedRecord == nil {
 				return "", evt.BadRequestError("Nenhuma chave cadastrada no KeyHybrid", nil)
 			}
-			secret := decryptSecretAtRest(matchedRecord.GetString("secret_key"))
+			secret, err := segredoDoRegistro(evt, matchedRecord)
+			if err != nil {
+				return "", err
+			}
 			if secret == "" {
 				return "", evt.BadRequestError("Nenhuma chave cadastrada no KeyHybrid", nil)
 			}
