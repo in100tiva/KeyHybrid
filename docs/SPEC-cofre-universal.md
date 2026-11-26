@@ -21,7 +21,7 @@ de IA, e tem quatro furos:
 - **Protegemos de**: site malicioso no navegador (F1/F2); chave indo para o destino errado
   (F3); chave impressa em terminal, log ou transcrição de agente (F4).
 - **Não protegemos de**: processo malicioso rodando **como o mesmo usuário**. Ele já lê
-  `~/.keyhybrid/.master.key` e o `pb_data`; nenhum token local muda isso. Fica registrado
+  `~/.keyhybrid/.master.key.wrapped` e o `pb_data`; nenhum token local muda isso. Fica registrado
   como limite conhecido (seção 8).
 
 ## 3. Tipos de chave
@@ -113,6 +113,10 @@ kh run --env VERCEL_TOKEN=vercel --env SUPABASE_ACCESS_TOKEN=supabase -- vercel 
 ## 8. Fora de escopo (limites conhecidos)
 
 - Processo malicioso como o mesmo usuário (seção 2). Caminho: chave mestra no keyring do SO.
+- Chave mestra em repouso: no Windows, `.master.key.wrapped` é selada por DPAPI; no Linux é
+  um arquivo `0600` sem selagem (Secret Service planejado na #40). Copiar `~/.keyhybrid`
+  equivale a copiar as chaves; o backup portátil seguro é o `.khvault`. No Linux, cifrar o
+  disco ou a home (LUKS).
 - PIN para liberar chave de produção no `kh run`/proxy.
 - API que precisa de **dois** cabeçalhos com a chave (PostgREST do Supabase: `apikey` +
   `Authorization`). A Management API (`api.supabase.com`) funciona.

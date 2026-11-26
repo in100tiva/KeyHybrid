@@ -98,7 +98,7 @@ O backup (`.khvault`, [#26](https://github.com/in100tiva/KeyHybrid/issues/26)) e
 
 **Contra o que não protege**
 
-- **Malware rodando com o seu usuário.** Ele já lê o `pb_data` e a chave mestra (selada pelo SO para esse mesmo usuário) e pode rodar `keyhybrid-server vault-dump` como o app faz. O backup não piora nem melhora isso.
+- **Malware rodando com o seu usuário.** Ele já lê o `pb_data` e a chave mestra (no Windows, selada por DPAPI para esse mesmo usuário; no Linux, um arquivo `0600` sem selagem) e pode rodar `keyhybrid-server vault-dump` como o app faz. O backup não piora nem melhora isso.
 - **Senha fraca.** Só o mínimo de 12 caracteres é obrigatório; o medidor de força é indicativo. Uma senha previsível cai na força bruta offline.
 - **Senha perdida.** Não há recuperação, cópia da senha nem porta dos fundos.
 - **Backup antigo.** Um arquivo continua válido para sempre com a senha dele. Se ele vazar junto com a senha, gire as chaves no provedor; apagar a chave do cofre não invalida o backup.
@@ -140,4 +140,5 @@ Você será creditado no advisory e no `CHANGELOG.md`, se desejar.
 - Mantenha o gateway escutando apenas em loopback (`127.0.0.1:8090`).
 - Ao usar Docker, publique a porta como `-p 127.0.0.1:8090:8090`.
 - Nunca faça commit de `~/.keyhybrid`, `pb_data/` ou de arquivos `.env`.
+- **Chave mestra em repouso, por plataforma.** No Windows, `~/.keyhybrid/.master.key.wrapped` é selada por DPAPI e só abre para o mesmo usuário na mesma máquina. No Linux ela é um arquivo `0600` **sem selagem** (a selagem pelo Secret Service está planejada na [#40](https://github.com/in100tiva/KeyHybrid/issues/40)): quem copiar `~/.keyhybrid` inteiro decifra o cofre offline, sem senha. Copiar essa pasta equivale a copiar as chaves; para backup portátil use o `.khvault`, cifrado pela sua senha. No Linux, cifre o disco ou a home (LUKS).
 - Rotacione a chave real no provedor se suspeitar de exposição — o cofre não impede o uso indevido de uma chave já vazada.
