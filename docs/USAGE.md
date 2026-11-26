@@ -318,11 +318,13 @@ O `install_linux.sh` deixa o gateway como serviço do usuário (`keyhybrid.servi
 5. `systemctl --user start keyhybrid.service` e confira com `systemctl --user status keyhybrid.service`.
 6. Abra o app. A lista de chaves deve ser a mesma de antes.
 
+No Linux a chave mestra fica no chaveiro do sistema (Secret Service), que destrava no login. Se o serviço subir antes disso, o gateway espera até 60 s pelo chaveiro, sai com `a chave mestra está no chaveiro do sistema (Secret Service), mas não foi lida…` e o systemd tenta de novo (`Restart=on-failure`) até você entrar na sessão. Ele nunca cria chave nova nesse caso. Se o chaveiro foi recriado e o item sumiu, restaure o `.khvault`: mova a pasta `~/.keyhybrid/pb_data` e o `~/.keyhybrid/.master.key.wrapped` para outro lugar e use **Backup** → **Restaurar backup** no app. No log, `AVISO: chave mestra ainda EM CLARO` quer dizer que a migração do arquivo antigo não aconteceu (chaveiro indisponível) e será tentada de novo no próximo boot.
+
 O token local (`~/.keyhybrid/.cli.token`) é trocado a cada início do gateway, mas só depois que ele conseguiu a porta 8090. Uma segunda instância que encontra a porta ocupada sai com `porta 127.0.0.1:8090 ocupada (outro KeyHybrid já está rodando?); token local mantido` e não mexe no token de quem está atendendo.
 
 ## Limitações conhecidas
 
-- Um processo malicioso rodando com o seu usuário ainda pode ler a chave.
+- Um processo malicioso rodando com o seu usuário ainda pode ler a chave (no Linux, do chaveiro destravado da sessão).
 - Não há PIN para liberar chave de produção.
 - APIs que exigem dois cabeçalhos com a chave (ex.: PostgREST do Supabase, `apikey` + `Authorization`) não funcionam; a Management API do Supabase funciona.
 - A interface usa apenas `Authorization: Bearer`; cabeçalho customizado só pela API.

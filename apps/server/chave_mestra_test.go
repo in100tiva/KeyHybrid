@@ -54,6 +54,32 @@ func TestChaveCriadaEmInstalacaoLimpa(t *testing.T) {
 	}
 }
 
+func chaveOuFalha(t *testing.T, dir string) []byte {
+	t.Helper()
+	k, err := loadOrCreateMasterKey(dir)
+	if err != nil {
+		t.Fatalf("loadOrCreateMasterKey: %v", err)
+	}
+	return k
+}
+
+// Arquivo vazio ou com lixo: erro claro, sem recursão e sem tocar no arquivo
+func TestArquivoDaChaveVazioOuInvalidoEhErro(t *testing.T) {
+	for _, conteudo := range [][]byte{{}, []byte("curto")} {
+		dir := t.TempDir()
+		wp := filepath.Join(dir, ".master.key.wrapped")
+		if err := os.WriteFile(wp, conteudo, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if k, err := loadOrCreateMasterKey(dir); err == nil || k != nil {
+			t.Fatalf("%q: chave %d bytes, erro %v; esperava erro", conteudo, len(k), err)
+		}
+		if got, _ := os.ReadFile(wp); string(got) != string(conteudo) {
+			t.Fatalf("%q: arquivo mudou para %q", conteudo, got)
+		}
+	}
+}
+
 // Trava para atualizações do PocketBase: o main confia que NewWithConfig já resolveu o --dir
 func TestDataDirRespeitaFlagDir(t *testing.T) {
 	d := t.TempDir()

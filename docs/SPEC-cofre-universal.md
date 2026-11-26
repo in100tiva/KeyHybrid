@@ -115,10 +115,14 @@ kh run --env VERCEL_TOKEN=vercel --env SUPABASE_ACCESS_TOKEN=supabase -- vercel 
 ## 8. Fora de escopo (limites conhecidos)
 
 - Processo malicioso como o mesmo usuário (seção 2). Caminho: chave mestra no keyring do SO.
-- Chave mestra em repouso: no Windows, `.master.key.wrapped` é selada por DPAPI; no Linux é
-  um arquivo `0600` sem selagem (Secret Service planejado na #40). Copiar `~/.keyhybrid`
-  equivale a copiar as chaves; o backup portátil seguro é o `.khvault`. No Linux, cifrar o
-  disco ou a home (LUKS).
+- Chave mestra em repouso: no Windows, `.master.key.wrapped` é selada por DPAPI; no Linux
+  fica no chaveiro do sistema (Secret Service; service `KeyHybrid`, user `master-key:<pasta>`,
+  valor em base64) e o arquivo guarda só o marcador `keyhybrid:secret-service:v1` (#40).
+  Copiar `~/.keyhybrid` sozinho já não abre o cofre; com o chaveiro destravado, qualquer
+  processo da sessão lê o item (a proteção é contra cópia de disco/pasta). Chaveiro trancado
+  ou sem o item: o gateway espera até 60 s e falha, sem criar chave nova. Se o chaveiro for
+  recriado, o cofre volta pelo `.khvault`. Sem Secret Service (container, sem D-Bus) a chave
+  fica em arquivo `0600` em claro, com aviso em todo boot.
 - PIN para liberar chave de produção no `kh run`/proxy.
 - API que precisa de **dois** cabeçalhos com a chave (PostgREST do Supabase: `apikey` +
   `Authorization`). A Management API (`api.supabase.com`) funciona.

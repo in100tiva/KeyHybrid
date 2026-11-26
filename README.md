@@ -42,7 +42,7 @@ flowchart LR
 
     subgraph Gateway["KeyHybrid Local Gateway (Go :8090)"]
         Proxy["Reverse Proxy Multimodal\n/v1/chat, /v1/audio, /v1/videos"]
-        AES["AES-256-GCM\n(~/.keyhybrid/.master.key.wrapped:\nDPAPI no Windows, 0600 sem selagem no Linux)"]
+        AES["AES-256-GCM\n(~/.keyhybrid/.master.key.wrapped:\nDPAPI no Windows, Secret Service no Linux)"]
         DB[("SQLite local\nsecret_key = enc:v1:...")]
     end
 
@@ -66,7 +66,7 @@ flowchart LR
 ## Pilares de segurança
 
 - **Isolamento por alias (`kh-<alias>`)**: nenhuma ferramenta externa vê a chave real; o gateway descriptografa em RAM só no instante da chamada HTTPS.
-- **Criptografia em repouso**: AES-256-GCM no SQLite com chave mestra local. No Windows a chave mestra é selada por DPAPI; no Linux é um arquivo `0600` **sem selagem** (selagem pelo Secret Service planejada na [#40](https://github.com/in100tiva/KeyHybrid/issues/40)), então copiar `~/.keyhybrid` equivale a copiar as chaves: para backup use o `.khvault` e, no Linux, cifre o disco ou a home (LUKS). O hash Argon2id do PIN vai para o keyring do SO (Windows Credential Manager/Secret Service) e para um arquivo `0600`, com `Zeroize` em Rust.
+- **Criptografia em repouso**: AES-256-GCM no SQLite com chave mestra local. No Windows a chave mestra é selada por DPAPI; no Linux fica no chaveiro do sistema (Secret Service), destravado no login, e o arquivo guarda só um marcador ([#40](https://github.com/in100tiva/KeyHybrid/issues/40)), então copiar `~/.keyhybrid` sozinho já não abre o cofre. Limite: com o chaveiro destravado, qualquer processo da sua sessão lê o item. Se o chaveiro for recriado, o cofre volta pelo `.khvault`: mantenha o backup em dia. Sem Secret Service (container) a chave fica em arquivo `0600` em claro, com aviso em todo boot. O hash Argon2id do PIN vai para o keyring do SO (Windows Credential Manager/Secret Service) e para um arquivo `0600`, com `Zeroize` em Rust.
 - **Sem troca silenciosa de modelo**: o modelo pedido vai ao provedor como veio; se ele recusar (`HTTP 404`, guardrail da OpenRouter), o erro volta ao cliente como veio. O `default_model` da chave só entra quando o pedido não traz modelo.
 
 ## Download
