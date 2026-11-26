@@ -596,8 +596,9 @@ func aggregateEnabledModels(ctx context.Context, records []*core.Record) ModelLi
 
 		// Se for OpenRouter e tiver chave, tentar buscar modelos dinamicamente com timeout curto
 		if provider == ProviderOpenRouter {
-			secretKey := decryptSecretAtRest(r.GetString("secret_key"))
-			if secretKey != "" {
+			// segredo que não decifra: fica só a lista fixa, sem chamar a OpenRouter
+			secretKey, err := decryptSecretAtRest(r.GetString("secret_key"))
+			if err == nil && secretKey != "" {
 				client := &http.Client{Timeout: 2 * time.Second}
 				req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://openrouter.ai/api/v1/models/user", nil)
 				if err == nil {

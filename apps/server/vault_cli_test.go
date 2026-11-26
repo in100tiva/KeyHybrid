@@ -179,6 +179,7 @@ func TestVaultValidacaoNaoGravaNada(t *testing.T) {
 			{Alias: "svc-http", Kind: "service", Secret: "segredo-sensivel-999", BaseURL: "http://api.exemplo.com/v1"},
 		}},
 		{"alias duplicado", []vaultEntry{entradaIA("Dup", s, false), entradaIA("dup", s, false)}},
+		{"segredo já cifrado", []vaultEntry{entradaIA("ok", s, false), entradaIA("cifrada", "enc:v1:segredo-sensivel-999", false)}},
 	}
 	for _, c := range casos {
 		_, err := applyVault(app, vaultDoc{Format: vaultFormat, Version: vaultVersion, Entries: c.entradas}, "merge", false)
