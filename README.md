@@ -117,7 +117,7 @@ curl http://127.0.0.1:8090/v1/chat/completions \
   -d '{"model":"openrouter/auto","messages":[{"role":"user","content":"oi"}]}'
 ```
 
-Chaves de serviço (Vercel, Supabase, GitHub), `kh run` e limitações conhecidas: **[docs/USAGE.md](docs/USAGE.md)**.
+Chaves de serviço (Vercel, Supabase, GitHub), `kh run`, `kh list` e limitações conhecidas: **[docs/USAGE.md](docs/USAGE.md)**.
 
 ## Rodar com Docker
 

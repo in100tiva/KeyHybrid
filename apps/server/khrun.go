@@ -79,22 +79,11 @@ func runCmd(args []string) int {
 		}
 	}
 
-	gw := os.Getenv("KH_GATEWAY")
-	if gw == "" {
-		gw = khDefaultGateway
+	gw, token, code := gatewayAndToken("kh run")
+	if code != 0 {
+		return code
 	}
-	gu, err := url.Parse(gw)
-	if err != nil || gu.Scheme != "http" || !hostAllowed(gu.Host) {
-		fmt.Fprintln(os.Stderr, "kh run: KH_GATEWAY precisa ser http em loopback")
-		return 2
-	}
-	tokBytes, err := os.ReadFile(cliTokenPath())
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "kh run: token local ausente; abra o KeyHybrid uma vez")
-		return 1
-	}
-
-	secrets, code := revealSecrets(strings.TrimRight(gw, "/"), strings.TrimSpace(string(tokBytes)), aliases)
+	secrets, code := revealSecrets(gw, token, aliases)
 	if code != 0 {
 		return code
 	}
@@ -160,6 +149,32 @@ func usoRun(motivo string) int {
 	return 2
 }
 
+// KH_GATEWAY (só http em loopback) e o token local, compartilhados por kh run e kh list
+func gatewayAndToken(cmd string) (string, string, int) {
+	gw := os.Getenv("KH_GATEWAY")
+	if gw == "" {
+		gw = khDefaultGateway
+	}
+	gu, err := url.Parse(gw)
+	if err != nil || gu.Scheme != "http" || !hostAllowed(gu.Host) {
+		fmt.Fprintln(os.Stderr, cmd+": KH_GATEWAY precisa ser http em loopback")
+		return "", "", 2
+	}
+	tokBytes, err := os.ReadFile(cliTokenPath())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, cmd+": token local ausente; abra o KeyHybrid uma vez")
+		return "", "", 1
+	}
+	return strings.TrimRight(gw, "/"), strings.TrimSpace(string(tokBytes)), 0
+}
+
+func khClient() *http.Client {
+	return &http.Client{
+		Timeout:       30 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+}
+
 // Chama o gateway local; o token vai no cabeçalho e nunca é impresso
 func revealSecrets(gw, token string, aliases []string) (map[string]string, int) {
 	body, _ := json.Marshal(map[string][]string{"aliases": aliases})
@@ -170,11 +185,7 @@ func revealSecrets(gw, token string, aliases []string) (map[string]string, int) 
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-KeyHybrid-Token", token)
-	client := &http.Client{
-		Timeout:       30 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
-	resp, err := client.Do(req)
+	resp, err := khClient().Do(req)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "kh run: KeyHybrid não está respondendo em", gw)
 		return nil, 1

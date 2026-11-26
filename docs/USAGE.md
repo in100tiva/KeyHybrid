@@ -131,6 +131,15 @@ kh run --env VERCEL_TOKEN=<alias> -- vercel deploy
 
 Fora de terminal (agente, pipe, log) o segredo sai mascarado como `****`; em terminal interativo a saída passa direto.
 
+**`kh list`** mostra os aliases cadastrados, para o agente saber o que pode pedir ao `kh run` sem abrir o app:
+
+```bash
+kh list          # tabela: ALIAS, TIPO (IA/serviço), PROVEDOR, MODELO PADRÃO
+kh list --json   # [{"alias":"openrouter","kind":"ai","provider":"openrouter","default_model":"openrouter/auto"}, …]
+```
+
+Usa o token local (`~/.keyhybrid/.cli.token`) e o mesmo `KH_GATEWAY` do `kh run`. Nunca mostra segredo, máscara, token virtual, URL base nem cabeçalho de autenticação; em chave de serviço, `default_model` vem vazio.
+
 ## Importar um `.env`
 
 Quem já tem as chaves num `.env` não precisa redigitar: **Importar .env**, no dock da interface, abre uma área onde você cola o conteúdo ou solta o arquivo. O texto fica mascarado na tela e só na memória do app.
