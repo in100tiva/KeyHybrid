@@ -483,7 +483,7 @@ func validarChave(req *KeyCreateRequest) (baseURL, authHeader, authPrefix string
 			req.Provider = "outro"
 		}
 	}
-	if req.Kind == "ai" && (req.DefaultModel == "" || req.DefaultModel == "google/gemini-2.0-flash-001") {
+	if req.Kind == "ai" && req.DefaultModel == "" {
 		req.DefaultModel = "openrouter/auto"
 	}
 	if req.Kind == "service" {
@@ -653,153 +653,7 @@ func main() {
 			})
 		})
 
-		// Listar chaves salvas usando FindAllRecords (100% imune a erros de coluna/filtro)
-		e.Router.GET("/api/keyhybrid/keys", func(evt *core.RequestEvent) error {
-			records, err := app.FindAllRecords("vault_keys")
-			if err != nil {
-				log.Printf("[KeyHybrid] Erro ao listar vault_keys: %v\n", err)
-				return evt.JSON(http.StatusOK, []KeySafeView{})
-			}
-
-			// Se houver chaves de IA e nenhuma estiver marcada como ativa, ativar a primeira automaticamente
-			aiKeys := onlyAI(records)
-			hasActive := false
-			for _, rec := range aiKeys {
-				if rec.GetBool("active") {
-					hasActive = true
-					break
-				}
-			}
-			if !hasActive && len(aiKeys) > 0 {
-				aiKeys[0].Set("active", true)
-				_ = app.Save(aiKeys[0])
-			}
-
-			// Ordenar: chave ativa primeiro, depois por alias
-			sort.SliceStable(records, func(i, j int) bool {
-				ai := records[i].GetBool("active")
-				aj := records[j].GetBool("active")
-				if ai != aj {
-					return ai
-				}
-				return records[i].GetString("alias") < records[j].GetString("alias")
-			})
-
-			authorized := tokenValid(evt.Request, cliToken)
-			result := make([]KeySafeView, 0, len(records))
-			for _, rec := range records {
-				if !isServiceKey(rec) {
-					defaultModel := rec.GetString("default_model")
-					if defaultModel == "" || defaultModel == "google/gemini-2.0-flash-001" {
-						rec.Set("default_model", "openrouter/auto")
-						_ = app.Save(rec)
-					}
-				}
-				result = append(result, keyView(rec, authorized))
-			}
-
-			return evt.JSON(http.StatusOK, result)
-		})
-
-		// Cadastrar ou atualizar uma chave pelo Alias: "ai" (padrão) ou "service" (qualquer API via /proxy e kh run)
-		// Escrita no cofre exige o token local: sem ele, qualquer processo da máquina apagava ou trocava chaves
-		e.Router.POST("/api/keyhybrid/keys", func(evt *core.RequestEvent) error {
-			if !tokenValid(evt.Request, cliToken) {
-				return evt.UnauthorizedError("Token local inválido", nil)
-			}
-			evt.Request.Body = http.MaxBytesReader(evt.Response, evt.Request.Body, 1<<20)
-			var req KeyCreateRequest
-			if err := evt.BindBody(&req); err != nil {
-				return evt.BadRequestError("Dados inválidos", err)
-			}
-
-			baseURL, authHeader, authPrefix, err := validarChave(&req)
-			if err != nil {
-				return evt.BadRequestError(err.Error(), nil)
-			}
-
-			collection, err := app.FindCollectionByNameOrId("vault_keys")
-			if err != nil {
-				return evt.InternalServerError("Coleção vault_keys não encontrada", err)
-			}
-
-			allRecords, _ := app.FindAllRecords("vault_keys")
-			var record *core.Record
-			for _, r := range allRecords {
-				if strings.EqualFold(r.GetString("alias"), req.Alias) {
-					record = r
-				} else if r.GetBool("active") && req.Kind == "ai" {
-					r.Set("active", false)
-					_ = app.Save(r)
-				}
-			}
-
-			if record == nil {
-				record = core.NewRecord(collection)
-			}
-
-			encSecret, err := encryptSecretAtRest(req.SecretKey)
-			if err != nil {
-				return evt.InternalServerError("Falha ao cifrar chave secreta", err)
-			}
-
-			record.Set("alias", req.Alias)
-			record.Set("provider", req.Provider)
-			record.Set("kind", req.Kind)
-			record.Set("secret_key", encSecret)
-			record.Set("base_url", baseURL)
-			record.Set("auth_header", authHeader)
-			record.Set("auth_prefix", authPrefix)
-			record.Set("default_model", req.DefaultModel)
-			record.Set("active", req.Kind == "ai") // "ativo" é só de IA
-
-			if err := app.Save(record); err != nil {
-				return evt.InternalServerError("Erro ao salvar chave no cofre", err)
-			}
-
-			return evt.JSON(http.StatusOK, keyView(record, true))
-		})
-
-		// Ativar uma chave específica como padrão (só IA)
-		e.Router.POST("/api/keyhybrid/keys/{id}/activate", func(evt *core.RequestEvent) error {
-			if !tokenValid(evt.Request, cliToken) {
-				return evt.UnauthorizedError("Token local inválido", nil)
-			}
-			id := evt.Request.PathValue("id")
-			target, err := app.FindRecordById("vault_keys", id)
-			if err != nil {
-				return evt.NotFoundError("Chave não encontrada", err)
-			}
-			if isServiceKey(target) {
-				return evt.BadRequestError("Chave de serviço não é ativada: use o alias em /proxy ou kh run", nil)
-			}
-
-			allRecords, _ := app.FindAllRecords("vault_keys")
-			for _, r := range onlyAI(allRecords) {
-				r.Set("active", r.Id == target.Id)
-				_ = app.Save(r)
-			}
-
-			return evt.JSON(http.StatusOK, map[string]any{"status": "activated", "id": target.Id, "alias": target.GetString("alias")})
-		})
-
-		// Remover uma chave do cofre
-		e.Router.DELETE("/api/keyhybrid/keys/{id}", func(evt *core.RequestEvent) error {
-			if !tokenValid(evt.Request, cliToken) {
-				return evt.UnauthorizedError("Token local inválido", nil)
-			}
-			id := evt.Request.PathValue("id")
-			target, err := app.FindRecordById("vault_keys", id)
-			if err != nil {
-				return evt.NotFoundError("Chave não encontrada", err)
-			}
-
-			if err := app.Delete(target); err != nil {
-				return evt.InternalServerError("Falha ao excluir chave", err)
-			}
-
-			return evt.JSON(http.StatusOK, map[string]any{"status": "deleted", "id": id})
-		})
+		registrarRotasDeChaves(e.Router, app, cliToken)
 
 		// Proxy de chave de serviço: o cliente chama /proxy/<alias>/... e a chave entra só no cabeçalho
 		e.Router.Any("/proxy/{alias}/{path...}", func(evt *core.RequestEvent) error {
@@ -888,234 +742,7 @@ func main() {
 			return evt.JSON(http.StatusOK, map[string]any{"secrets": secrets})
 		})
 
-		// Handler Universal compatível com OpenAI / OpenRouter (/v1/chat/completions e /api/ai/proxy/chat)
-		proxyChatHandler := func(evt *core.RequestEvent) error {
-			evt.Request.Body = http.MaxBytesReader(evt.Response, evt.Request.Body, 4<<20)
-			bodyBytes, err := io.ReadAll(evt.Request.Body)
-			if err != nil {
-				var maxErr *http.MaxBytesError
-				if errors.As(err, &maxErr) {
-					return evt.Error(http.StatusRequestEntityTooLarge, "Corpo da requisição excede o limite permitido", err)
-				}
-				return evt.BadRequestError("Falha ao ler corpo da requisição", err)
-			}
-			bodyBytes = bytes.TrimPrefix(bodyBytes, []byte("\xef\xbb\xbf"))
-
-			var payload map[string]any
-			if err := json.Unmarshal(bodyBytes, &payload); err != nil {
-				return evt.BadRequestError("JSON inválido", err)
-			}
-
-			// Extrair alias do Header Authorization: Bearer <alias_ou_kh-alias> ou do próprio JSON
-			authHeader := strings.TrimSpace(evt.Request.Header.Get("Authorization"))
-			requestedAlias := ""
-			if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
-				requestedAlias = strings.TrimSpace(authHeader[7:])
-				requestedAlias = strings.TrimPrefix(strings.ToLower(requestedAlias), "kh-")
-			}
-			if a, ok := payload["alias"].(string); ok && a != "" {
-				requestedAlias = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(a)), "kh-")
-				delete(payload, "alias")
-			}
-			headerProvider := strings.TrimSpace(evt.Request.Header.Get("X-Provider"))
-
-			if requestedAlias == "" && headerProvider == "" && !tokenValid(evt.Request, cliToken) {
-				return evt.UnauthorizedError("Informe Authorization: Bearer kh-<alias> ou X-Provider", nil)
-			}
-
-			allRecords, _ := app.FindAllRecords("vault_keys")
-			allRecords = onlyAI(allRecords)
-			if len(allRecords) == 0 {
-				return evt.BadRequestError(
-					"Nenhuma chave cadastrada no KeyHybrid. Adicione sua chave na interface do KeyHybrid.",
-					nil,
-				)
-			}
-
-			// Obter o modelo solicitado
-			requestedModel, _ := payload["model"].(string)
-
-			matchedRecord, cleanModel, provider := resolveAIProvider(
-				requestedAlias,
-				headerProvider,
-				requestedModel,
-				allRecords,
-			)
-
-			if matchedRecord == nil {
-				return evt.NotFoundError("Chave ou provedor não encontrado no cofre", nil)
-			}
-
-			secretKey, err := segredoDoRegistro(evt, matchedRecord)
-			if err != nil {
-				return err
-			}
-			baseURL := matchedRecord.GetString("base_url")
-			defaultModel := matchedRecord.GetString("default_model")
-
-			if secretKey == "" {
-				return evt.BadRequestError(
-					"Nenhuma chave cadastrada no KeyHybrid. Adicione sua chave na interface do KeyHybrid.",
-					nil,
-				)
-			}
-
-			// Garantir modelo padrão caso o cliente não tenha enviado
-			if cleanModel == "" || cleanModel == "google/gemini-2.0-flash-001" {
-				if defaultModel != "" && defaultModel != "google/gemini-2.0-flash-001" {
-					cleanModel = defaultModel
-				} else if provider == ProviderAnthropic {
-					cleanModel = "claude-3-5-sonnet-20241022"
-				} else {
-					cleanModel = "openrouter/auto"
-				}
-			}
-
-			// Remover campo interno 'provider' apenas se for string de roteamento do KeyHybrid
-			if _, isStr := payload["provider"].(string); isStr {
-				delete(payload, "provider")
-			}
-
-			targetURL := resolveProviderChatURL(provider, baseURL)
-			isStream, _ := payload["stream"].(bool)
-
-			// 1. Tradução específica para Anthropic (/v1/messages)
-			if provider == ProviderAnthropic {
-				anthropicReq, trErr := translateOpenAIToAnthropic(payload, cleanModel)
-				if trErr != nil {
-					return evt.BadRequestError("Falha na tradução do payload para Anthropic", trErr)
-				}
-				reqBytes, mErr := json.Marshal(anthropicReq)
-				if mErr != nil {
-					return evt.InternalServerError("Falha ao serializar requisição Anthropic", mErr)
-				}
-
-				httpReq, rErr := http.NewRequestWithContext(
-					evt.Request.Context(),
-					http.MethodPost,
-					targetURL,
-					bytes.NewReader(reqBytes),
-				)
-				if rErr != nil {
-					return evt.InternalServerError("Falha ao criar requisição Anthropic", rErr)
-				}
-				httpReq.Header.Set("x-api-key", secretKey)
-				httpReq.Header.Set("anthropic-version", "2023-06-01")
-				httpReq.Header.Set("Content-Type", "application/json")
-
-				client := &http.Client{Timeout: 5 * time.Minute}
-				upstreamResp, err := client.Do(httpReq)
-				if err != nil {
-					return evt.InternalServerError("Erro de conexão com Anthropic", err)
-				}
-				defer upstreamResp.Body.Close()
-
-				if upstreamResp.StatusCode != http.StatusOK {
-					for k, v := range upstreamResp.Header {
-						evt.Response.Header()[k] = v
-					}
-					evt.Response.WriteHeader(upstreamResp.StatusCode)
-					_, _ = io.Copy(evt.Response, upstreamResp.Body)
-					return nil
-				}
-
-				if isStream {
-					return pipeAnthropicStreamToOpenAI(evt.Request.Context(), evt.Response, upstreamResp.Body, requestedModel)
-				}
-
-				bodyResp, readErr := io.ReadAll(upstreamResp.Body)
-				if readErr != nil {
-					return evt.InternalServerError("Falha ao ler resposta da Anthropic", readErr)
-				}
-				var antResp AnthropicResponse
-				if err := json.Unmarshal(bodyResp, &antResp); err != nil {
-					return evt.InternalServerError("Falha ao decodificar resposta da Anthropic", err)
-				}
-				openaiResp := translateAnthropicToOpenAI(&antResp, requestedModel)
-				return evt.JSON(http.StatusOK, openaiResp)
-			}
-
-			// 2. Provedores no padrão OpenAI (OpenAI, Groq, Gemini, OpenRouter)
-			if provider == ProviderOpenRouter {
-				payload["model"] = requestedModel
-			} else {
-				payload["model"] = cleanModel
-			}
-
-			doUpstream := func(bodyMap map[string]any) (*http.Response, error) {
-				forwardBytes, mErr := json.Marshal(bodyMap)
-				if mErr != nil {
-					return nil, mErr
-				}
-				httpReq, rErr := http.NewRequestWithContext(
-					evt.Request.Context(),
-					http.MethodPost,
-					targetURL,
-					bytes.NewReader(forwardBytes),
-				)
-				if rErr != nil {
-					return nil, rErr
-				}
-				// Injeta a chave real de forma invisível para o terminal/cliente
-				httpReq.Header.Set("Authorization", "Bearer "+secretKey)
-				httpReq.Header.Set("Content-Type", "application/json")
-				httpReq.Header.Set("HTTP-Referer", "https://keyhybrid.local")
-				httpReq.Header.Set("X-Title", "KeyHybrid Vault Gateway")
-
-				client := &http.Client{Timeout: 5 * time.Minute}
-				return client.Do(httpReq)
-			}
-
-			upstreamResp, err := doUpstream(payload)
-			if err != nil {
-				return evt.InternalServerError("Erro de conexão com o provedor de IA", err)
-			}
-
-			// Se o modelo solicitado for bloqueado por Guardrail da OpenRouter (404), faz fallback inteligente para openrouter/auto
-			if upstreamResp.StatusCode == http.StatusNotFound && (provider == ProviderOpenRouter || provider == "") && payload["model"] != "openrouter/auto" {
-				_ = upstreamResp.Body.Close()
-				fallbackModel := cleanModel
-				payload["model"] = "openrouter/auto"
-				// Remove modalidades incompatíveis caso o fallback vá para modelo de texto/código permitido pelo guardrail
-				delete(payload, "modalities")
-				delete(payload, "audio")
-				upstreamResp, err = doUpstream(payload)
-				if err != nil {
-					return evt.InternalServerError("Erro de conexão no fallback da OpenRouter", err)
-				}
-				evt.Response.Header().Set("X-KeyHybrid-Fallback-From", fallbackModel)
-				evt.Response.Header().Set("X-KeyHybrid-Fallback-To", "openrouter/auto")
-			}
-			defer upstreamResp.Body.Close()
-
-			for k, v := range upstreamResp.Header {
-				evt.Response.Header()[k] = v
-			}
-			evt.Response.WriteHeader(upstreamResp.StatusCode)
-
-			if isStream {
-				flusher, isFlusher := evt.Response.(http.Flusher)
-				buf := make([]byte, 1024)
-				for {
-					n, readErr := upstreamResp.Body.Read(buf)
-					if n > 0 {
-						if _, writeErr := evt.Response.Write(buf[:n]); writeErr != nil {
-							break
-						}
-						if isFlusher {
-							flusher.Flush()
-						}
-					}
-					if readErr != nil {
-						break
-					}
-				}
-				return nil
-			}
-
-			_, err = io.Copy(evt.Response, upstreamResp.Body)
-			return err
-		}
+		proxyChatHandler := proxyChat(app, cliToken)
 
 		// Expor tanto no padrão OpenAI (/v1/chat/completions) quanto na rota interna
 		e.Router.POST("/v1/chat/completions", proxyChatHandler)
@@ -1364,5 +991,366 @@ func main() {
 
 	if err := app.Start(); err != nil {
 		log.Fatal(err)
+	}
+}
+
+// Rotas de cadastro, listagem, ativação e exclusão de chaves (fora do main para os testes)
+func registrarRotasDeChaves(r *router.Router[*core.RequestEvent], app core.App, cliToken string) {
+	// Listar chaves salvas usando FindAllRecords (100% imune a erros de coluna/filtro)
+	r.GET("/api/keyhybrid/keys", func(evt *core.RequestEvent) error {
+		records, err := app.FindAllRecords("vault_keys")
+		if err != nil {
+			log.Printf("[KeyHybrid] Erro ao listar vault_keys: %v\n", err)
+			return evt.JSON(http.StatusOK, []KeySafeView{})
+		}
+
+		// Só leitura: listar nunca ativa chave nem regrava default_model (a ativação mora no cadastro e na exclusão)
+		// Ordenar: chave ativa primeiro, depois por alias
+		sort.SliceStable(records, func(i, j int) bool {
+			ai := records[i].GetBool("active")
+			aj := records[j].GetBool("active")
+			if ai != aj {
+				return ai
+			}
+			return records[i].GetString("alias") < records[j].GetString("alias")
+		})
+
+		authorized := tokenValid(evt.Request, cliToken)
+		result := make([]KeySafeView, 0, len(records))
+		for _, rec := range records {
+			result = append(result, keyView(rec, authorized))
+		}
+
+		return evt.JSON(http.StatusOK, result)
+	})
+
+	// Cadastrar ou atualizar uma chave pelo Alias: "ai" (padrão) ou "service" (qualquer API via /proxy e kh run)
+	// Escrita no cofre exige o token local: sem ele, qualquer processo da máquina apagava ou trocava chaves
+	r.POST("/api/keyhybrid/keys", func(evt *core.RequestEvent) error {
+		if !tokenValid(evt.Request, cliToken) {
+			return evt.UnauthorizedError("Token local inválido", nil)
+		}
+		evt.Request.Body = http.MaxBytesReader(evt.Response, evt.Request.Body, 1<<20)
+		var req KeyCreateRequest
+		if err := evt.BindBody(&req); err != nil {
+			return evt.BadRequestError("Dados inválidos", err)
+		}
+
+		baseURL, authHeader, authPrefix, err := validarChave(&req)
+		if err != nil {
+			return evt.BadRequestError(err.Error(), nil)
+		}
+
+		collection, err := app.FindCollectionByNameOrId("vault_keys")
+		if err != nil {
+			return evt.InternalServerError("Coleção vault_keys não encontrada", err)
+		}
+
+		allRecords, _ := app.FindAllRecords("vault_keys")
+		var record *core.Record
+		for _, r := range allRecords {
+			if strings.EqualFold(r.GetString("alias"), req.Alias) {
+				record = r
+			} else if r.GetBool("active") && req.Kind == "ai" {
+				r.Set("active", false)
+				_ = app.Save(r)
+			}
+		}
+
+		if record == nil {
+			record = core.NewRecord(collection)
+		}
+
+		encSecret, err := encryptSecretAtRest(req.SecretKey)
+		if err != nil {
+			return evt.InternalServerError("Falha ao cifrar chave secreta", err)
+		}
+
+		record.Set("alias", req.Alias)
+		record.Set("provider", req.Provider)
+		record.Set("kind", req.Kind)
+		record.Set("secret_key", encSecret)
+		record.Set("base_url", baseURL)
+		record.Set("auth_header", authHeader)
+		record.Set("auth_prefix", authPrefix)
+		record.Set("default_model", req.DefaultModel)
+		record.Set("active", req.Kind == "ai") // "ativo" é só de IA
+
+		if err := app.Save(record); err != nil {
+			return evt.InternalServerError("Erro ao salvar chave no cofre", err)
+		}
+
+		return evt.JSON(http.StatusOK, keyView(record, true))
+	})
+
+	// Ativar uma chave específica como padrão (só IA)
+	r.POST("/api/keyhybrid/keys/{id}/activate", func(evt *core.RequestEvent) error {
+		if !tokenValid(evt.Request, cliToken) {
+			return evt.UnauthorizedError("Token local inválido", nil)
+		}
+		id := evt.Request.PathValue("id")
+		target, err := app.FindRecordById("vault_keys", id)
+		if err != nil {
+			return evt.NotFoundError("Chave não encontrada", err)
+		}
+		if isServiceKey(target) {
+			return evt.BadRequestError("Chave de serviço não é ativada: use o alias em /proxy ou kh run", nil)
+		}
+
+		allRecords, _ := app.FindAllRecords("vault_keys")
+		for _, r := range onlyAI(allRecords) {
+			r.Set("active", r.Id == target.Id)
+			_ = app.Save(r)
+		}
+
+		return evt.JSON(http.StatusOK, map[string]any{"status": "activated", "id": target.Id, "alias": target.GetString("alias")})
+	})
+
+	// Remover uma chave do cofre
+	r.DELETE("/api/keyhybrid/keys/{id}", func(evt *core.RequestEvent) error {
+		if !tokenValid(evt.Request, cliToken) {
+			return evt.UnauthorizedError("Token local inválido", nil)
+		}
+		id := evt.Request.PathValue("id")
+		target, err := app.FindRecordById("vault_keys", id)
+		if err != nil {
+			return evt.NotFoundError("Chave não encontrada", err)
+		}
+
+		if err := app.Delete(target); err != nil {
+			return evt.InternalServerError("Falha ao excluir chave", err)
+		}
+
+		// A ativa saiu: a próxima de IA (ordem por alias) assume
+		if target.GetBool("active") && !isServiceKey(target) {
+			restantes, _ := app.FindAllRecords("vault_keys")
+			ia := onlyAI(restantes)
+			sort.SliceStable(ia, func(i, j int) bool { return ia[i].GetString("alias") < ia[j].GetString("alias") })
+			if len(ia) > 0 {
+				ia[0].Set("active", true)
+				if err := app.Save(ia[0]); err != nil {
+					return evt.InternalServerError("Chave excluída, mas falhou ao ativar a próxima", err)
+				}
+			}
+		}
+
+		return evt.JSON(http.StatusOK, map[string]any{"status": "deleted", "id": id})
+	})
+}
+
+// Handler universal compatível com OpenAI / OpenRouter (/v1/chat/completions e /api/ai/proxy/chat)
+func proxyChat(app core.App, cliToken string) func(*core.RequestEvent) error {
+	return func(evt *core.RequestEvent) error {
+		evt.Request.Body = http.MaxBytesReader(evt.Response, evt.Request.Body, 4<<20)
+		bodyBytes, err := io.ReadAll(evt.Request.Body)
+		if err != nil {
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
+				return evt.Error(http.StatusRequestEntityTooLarge, "Corpo da requisição excede o limite permitido", err)
+			}
+			return evt.BadRequestError("Falha ao ler corpo da requisição", err)
+		}
+		bodyBytes = bytes.TrimPrefix(bodyBytes, []byte("\xef\xbb\xbf"))
+
+		var payload map[string]any
+		if err := json.Unmarshal(bodyBytes, &payload); err != nil {
+			return evt.BadRequestError("JSON inválido", err)
+		}
+
+		// Extrair alias do Header Authorization: Bearer <alias_ou_kh-alias> ou do próprio JSON
+		authHeader := strings.TrimSpace(evt.Request.Header.Get("Authorization"))
+		requestedAlias := ""
+		if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
+			requestedAlias = strings.TrimSpace(authHeader[7:])
+			requestedAlias = strings.TrimPrefix(strings.ToLower(requestedAlias), "kh-")
+		}
+		if a, ok := payload["alias"].(string); ok && a != "" {
+			requestedAlias = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(a)), "kh-")
+			delete(payload, "alias")
+		}
+		headerProvider := strings.TrimSpace(evt.Request.Header.Get("X-Provider"))
+
+		if requestedAlias == "" && headerProvider == "" && !tokenValid(evt.Request, cliToken) {
+			return evt.UnauthorizedError("Informe Authorization: Bearer kh-<alias> ou X-Provider", nil)
+		}
+
+		allRecords, _ := app.FindAllRecords("vault_keys")
+		allRecords = onlyAI(allRecords)
+		if len(allRecords) == 0 {
+			return evt.BadRequestError(
+				"Nenhuma chave cadastrada no KeyHybrid. Adicione sua chave na interface do KeyHybrid.",
+				nil,
+			)
+		}
+
+		// Obter o modelo solicitado
+		requestedModel, _ := payload["model"].(string)
+
+		matchedRecord, cleanModel, provider := resolveAIProvider(
+			requestedAlias,
+			headerProvider,
+			requestedModel,
+			allRecords,
+		)
+
+		if matchedRecord == nil {
+			return evt.NotFoundError("Chave ou provedor não encontrado no cofre", nil)
+		}
+
+		secretKey, err := segredoDoRegistro(evt, matchedRecord)
+		if err != nil {
+			return err
+		}
+		baseURL := matchedRecord.GetString("base_url")
+		defaultModel := matchedRecord.GetString("default_model")
+
+		if secretKey == "" {
+			return evt.BadRequestError(
+				"Nenhuma chave cadastrada no KeyHybrid. Adicione sua chave na interface do KeyHybrid.",
+				nil,
+			)
+		}
+
+		// Modelo padrão só quando o cliente não mandou nenhum: o pedido explícito nunca é trocado
+		if cleanModel == "" {
+			if defaultModel != "" {
+				cleanModel = defaultModel
+			} else if provider == ProviderAnthropic {
+				cleanModel = "claude-3-5-sonnet-20241022"
+			} else {
+				cleanModel = "openrouter/auto"
+			}
+		}
+
+		// Remover campo interno 'provider' apenas se for string de roteamento do KeyHybrid
+		if _, isStr := payload["provider"].(string); isStr {
+			delete(payload, "provider")
+		}
+
+		targetURL := resolveProviderChatURL(provider, baseURL)
+		isStream, _ := payload["stream"].(bool)
+
+		// 1. Tradução específica para Anthropic (/v1/messages)
+		if provider == ProviderAnthropic {
+			anthropicReq, trErr := translateOpenAIToAnthropic(payload, cleanModel)
+			if trErr != nil {
+				return evt.BadRequestError("Falha na tradução do payload para Anthropic", trErr)
+			}
+			reqBytes, mErr := json.Marshal(anthropicReq)
+			if mErr != nil {
+				return evt.InternalServerError("Falha ao serializar requisição Anthropic", mErr)
+			}
+
+			httpReq, rErr := http.NewRequestWithContext(
+				evt.Request.Context(),
+				http.MethodPost,
+				targetURL,
+				bytes.NewReader(reqBytes),
+			)
+			if rErr != nil {
+				return evt.InternalServerError("Falha ao criar requisição Anthropic", rErr)
+			}
+			httpReq.Header.Set("x-api-key", secretKey)
+			httpReq.Header.Set("anthropic-version", "2023-06-01")
+			httpReq.Header.Set("Content-Type", "application/json")
+
+			client := &http.Client{Timeout: 5 * time.Minute}
+			upstreamResp, err := client.Do(httpReq)
+			if err != nil {
+				return evt.InternalServerError("Erro de conexão com Anthropic", err)
+			}
+			defer upstreamResp.Body.Close()
+
+			if upstreamResp.StatusCode != http.StatusOK {
+				for k, v := range upstreamResp.Header {
+					evt.Response.Header()[k] = v
+				}
+				evt.Response.WriteHeader(upstreamResp.StatusCode)
+				_, _ = io.Copy(evt.Response, upstreamResp.Body)
+				return nil
+			}
+
+			if isStream {
+				return pipeAnthropicStreamToOpenAI(evt.Request.Context(), evt.Response, upstreamResp.Body, requestedModel)
+			}
+
+			bodyResp, readErr := io.ReadAll(upstreamResp.Body)
+			if readErr != nil {
+				return evt.InternalServerError("Falha ao ler resposta da Anthropic", readErr)
+			}
+			var antResp AnthropicResponse
+			if err := json.Unmarshal(bodyResp, &antResp); err != nil {
+				return evt.InternalServerError("Falha ao decodificar resposta da Anthropic", err)
+			}
+			openaiResp := translateAnthropicToOpenAI(&antResp, requestedModel)
+			return evt.JSON(http.StatusOK, openaiResp)
+		}
+
+		// 2. Provedores no padrão OpenAI (OpenAI, Groq, Gemini, OpenRouter)
+		if provider == ProviderOpenRouter {
+			payload["model"] = requestedModel
+		} else {
+			payload["model"] = cleanModel
+		}
+
+		doUpstream := func(bodyMap map[string]any) (*http.Response, error) {
+			forwardBytes, mErr := json.Marshal(bodyMap)
+			if mErr != nil {
+				return nil, mErr
+			}
+			httpReq, rErr := http.NewRequestWithContext(
+				evt.Request.Context(),
+				http.MethodPost,
+				targetURL,
+				bytes.NewReader(forwardBytes),
+			)
+			if rErr != nil {
+				return nil, rErr
+			}
+			// Injeta a chave real de forma invisível para o terminal/cliente
+			httpReq.Header.Set("Authorization", "Bearer "+secretKey)
+			httpReq.Header.Set("Content-Type", "application/json")
+			httpReq.Header.Set("HTTP-Referer", "https://keyhybrid.local")
+			httpReq.Header.Set("X-Title", "KeyHybrid Vault Gateway")
+
+			client := &http.Client{Timeout: 5 * time.Minute}
+			return client.Do(httpReq)
+		}
+
+		upstreamResp, err := doUpstream(payload)
+		if err != nil {
+			return evt.InternalServerError("Erro de conexão com o provedor de IA", err)
+		}
+
+		// Status do provedor (404 inclusive) volta ao cliente como veio: trocar de modelo em silêncio é proibido
+		defer upstreamResp.Body.Close()
+
+		for k, v := range upstreamResp.Header {
+			evt.Response.Header()[k] = v
+		}
+		evt.Response.WriteHeader(upstreamResp.StatusCode)
+
+		if isStream {
+			flusher, isFlusher := evt.Response.(http.Flusher)
+			buf := make([]byte, 1024)
+			for {
+				n, readErr := upstreamResp.Body.Read(buf)
+				if n > 0 {
+					if _, writeErr := evt.Response.Write(buf[:n]); writeErr != nil {
+						break
+					}
+					if isFlusher {
+						flusher.Flush()
+					}
+				}
+				if readErr != nil {
+					break
+				}
+			}
+			return nil
+		}
+
+		_, err = io.Copy(evt.Response, upstreamResp.Body)
+		return err
 	}
 }
