@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"ganigeorgiev.com/pocketbase/pocketbase/core"
 )
 
 const segredoTeste = "segredo-de-teste-123456"
@@ -268,5 +271,27 @@ func TestAnthropicNaoVaiParaTerceiro(t *testing.T) {
 		if got := anthropicModel(in); got != want {
 			t.Errorf("anthropicModel(%v) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestListViewSemTokenEscondeMapaDoServico(t *testing.T) {
+	rec := core.NewRecord(core.NewBaseCollection("vault_keys"))
+	rec.Id = "abc"
+	rec.Set("alias", "supabase")
+	rec.Set("provider", "supabase")
+	rec.Set("kind", "service")
+	rec.Set("base_url", "https://api.supabase.com")
+	rec.Set("auth_header", "Authorization")
+
+	semToken, _ := json.Marshal(listView(rec, false))
+	var campos map[string]any
+	_ = json.Unmarshal(semToken, &campos)
+	if len(campos) != 3 || campos["id"] != "abc" || campos["alias"] != "supabase" || campos["kind"] != "service" {
+		t.Fatalf("sem token devolveu %s, want só id, alias e kind", semToken)
+	}
+
+	comToken, _ := json.Marshal(listView(rec, true))
+	if !strings.Contains(string(comToken), `"base_url":"https://api.supabase.com"`) || !strings.Contains(string(comToken), `"auth_header":"Authorization"`) {
+		t.Fatalf("com token perdeu campos: %s", comToken)
 	}
 }
