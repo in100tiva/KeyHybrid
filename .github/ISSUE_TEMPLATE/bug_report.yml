@@ -41,7 +41,7 @@ body:
     attributes:
       label: Versão do KeyHybrid
       description: Tag da release ou saída de `keyhybrid-server --version`
-      placeholder: v0.1.0
+      placeholder: v0.2.0
     validations:
       required: true
 
