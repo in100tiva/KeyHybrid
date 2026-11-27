@@ -6,6 +6,8 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o 
 
 ## [Não publicado]
 
+## [0.2.0] - 2026-11-27
+
 ### Adicionado
 
 - **`kh list`** ([#51](https://github.com/in100tiva/KeyHybrid/issues/51)): lista os aliases cadastrados com tipo, provedor e modelo padrão, sem segredo, `base_url` nem `auth_header`; `--json` para agentes e scripts.
@@ -87,5 +89,6 @@ Primeira versão pública do KeyHybrid: cofre *zero-knowledge* de chaves de IA c
 
 - Não há migração: esta é a primeira release pública. Use a seção *Abrir issue* para relatar incompatibilidades.
 
+[0.2.0]: https://github.com/in100tiva/KeyHybrid/releases/tag/v0.2.0
 [0.1.0]: https://github.com/in100tiva/KeyHybrid/releases/tag/v0.1.0
-[Não publicado]: https://github.com/in100tiva/KeyHybrid/compare/v0.1.0...HEAD
+[Não publicado]: https://github.com/in100tiva/KeyHybrid/compare/v0.2.0...HEAD

@@ -1,6 +1,6 @@
 [package]
 name = "desktop"
-version = "0.1.0"
+version = "0.2.0"
 description = "KeyHybrid Desktop - Secure AI Vault & Gateway"
 authors = ["KeyHybrid"]
 edition = "2024"
